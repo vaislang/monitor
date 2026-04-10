@@ -1,0 +1,702 @@
+<template>
+  <div class="alerts-page">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <div class="page-header-left">
+        <h2 class="page-title">{t('alerts.title')}</h2>
+        <span class="page-count">{rules.length} {t('common.total')}</span>
+      </div>
+      <button class="btn btn-primary" @click="handleCreateRule">
+        <span class="btn-icon">+</span>
+        <span>{t('alerts.createAlert')}</span>
+      </button>
+    </div>
+
+    <!-- 에러 메시지 -->
+    {#if errorMessage}
+      <div class="alert alert-error" role="alert">
+        <span class="alert-icon">⚠</span>
+        <span>{errorMessage}</span>
+        <button class="alert-close" @click="clearError">✕</button>
+      </div>
+    {/if}
+
+    <!-- 로딩 상태 -->
+    {#if loading}
+      <div class="loading-container">
+        <div class="spinner"></div>
+        <span>{t('common.loading')}</span>
+      </div>
+    {:else if rules.length == 0}
+      <!-- 빈 상태 -->
+      <div class="empty-state">
+        <span class="empty-icon">⚠</span>
+        <p class="empty-title">{t('common.noData')}</p>
+        <button class="btn btn-primary" @click="handleCreateRule">
+          {t('alerts.createAlert')}
+        </button>
+      </div>
+    {:else}
+      <!-- 알림 룰 목록 테이블 -->
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>{t('alerts.ruleName')}</th>
+              <th>{t('alerts.condition')}</th>
+              <th>{t('common.status')}</th>
+              <th>{t('alerts.severity.critical').replace('Critical', '') || 'Severity'}</th>
+              <th>{t('alerts.channel')}</th>
+              <th>{t('common.actions')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each rules as rule}
+              <tr class="table-row">
+                <td class="cell-name">
+                  <span class="rule-name">{rule.name}</span>
+                </td>
+                <td class="cell-condition">
+                  <code class="condition-code">
+                    {rule.metric} {formatOperator(rule.operator)} {rule.threshold}
+                  </code>
+                </td>
+                <td class="cell-status">
+                  <label class="toggle-switch" title={rule.active ? t('alerts.active') : t('alerts.inactive')}>
+                    <input
+                      type="checkbox"
+                      checked={rule.active}
+                      @change={e => handleToggleRule(rule, e)}
+                    />
+                    <span class="toggle-slider"></span>
+                  </label>
+                  <span class="toggle-label" class:active={rule.active}>
+                    {rule.active ? t('alerts.active') : t('alerts.inactive')}
+                  </span>
+                </td>
+                <td class="cell-severity">
+                  <span class="severity-badge" class:severity-critical={rule.severity == 'critical'} class:severity-warning={rule.severity == 'warning'} class:severity-info={rule.severity == 'info'}>
+                    {t('alerts.severity.' + rule.severity)}
+                  </span>
+                </td>
+                <td class="cell-channel">
+                  <span class="channel-tag">{rule.channel}</span>
+                </td>
+                <td class="cell-actions">
+                  <button class="action-btn edit-btn" @click={e => handleEditRule(rule)} title={t('common.edit')}>
+                    <span>✎</span>
+                  </button>
+                  <button class="action-btn delete-btn" @click={e => handleDeleteRule(rule)} title={t('common.delete')}>
+                    <span>✕</span>
+                  </button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+
+    <!-- 삭제 확인 모달 -->
+    {#if showDeleteModal}
+      <div class="modal-overlay" @click="cancelDelete">
+        <div class="modal" @click|stopPropagation="">
+          <div class="modal-header">
+            <h3 class="modal-title">{t('alerts.deleteAlert')}</h3>
+          </div>
+          <div class="modal-body">
+            <p>{t('alerts.deleteConfirm')}</p>
+            {#if selectedRule}
+              <p class="delete-target-name">{selectedRule.name}</p>
+            {/if}
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="cancelDelete">
+              {t('common.cancel')}
+            </button>
+            <button class="btn btn-danger" @click="confirmDelete" disabled={deleting}>
+              {#if deleting}
+                <span class="btn-spinner-sm"></span>
+              {/if}
+              {t('common.delete')}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+  </div>
+</template>
+
+<script>
+import { t } from '../../i18n.vais'
+import { authStore } from '../../stores/auth.vais'
+
+# 상태
+let rules = []
+let loading = false
+let errorMessage = ''
+let showDeleteModal = false
+let selectedRule = null
+let deleting = false
+
+# 연산자 포맷
+F formatOperator(op: str) -> str {
+  M op {
+    "gt" => ">",
+    "lt" => "<",
+    "eq" => "==",
+    "gte" => ">=",
+    "lte" => "<=",
+    _ => op
+  }
+}
+
+# 에러 초기화
+F clearError() {
+  errorMessage = ''
+}
+
+# 알림 룰 목록 로드
+A F loadRules() {
+  loading = true
+  errorMessage = ''
+
+  let token = authStore.token
+  let response = Y fetch_get_with_token("/api/v1/alerts", token)
+  let status = json_get(response, "status")
+
+  if status != "200" {
+    errorMessage = t('common.error')
+    loading = false
+    R
+  }
+
+  let resp_body = json_get(response, "body")
+  let data = json_get(resp_body, "data")
+  rules = json_parse_array(data)
+  loading = false
+}
+
+# 룰 생성 페이지로 이동
+F handleCreateRule() {
+  window.router.navigate('/alerts/new')
+}
+
+# 룰 편집
+F handleEditRule(rule) {
+  window.router.navigate('/alerts/edit/' + rule.id)
+}
+
+# 룰 활성/비활성 토글
+A F handleToggleRule(rule, e) {
+  let new_active = e.target.checked
+  let token = authStore.token
+  let body = "{\"active\":" + (new_active ? "true" : "false") + "}"
+
+  let response = Y fetch_patch_with_token("/api/v1/alerts/" + rule.id, body, token)
+  let status = json_get(response, "status")
+
+  if status != "200" {
+    errorMessage = t('common.error')
+    # 토글 원상복구
+    e.target.checked = !new_active
+    R
+  }
+
+  # 로컬 상태 업데이트
+  let idx = 0
+  let i = 0
+  for r in rules {
+    if r.id == rule.id {
+      idx = i
+    }
+    i = i + 1
+  }
+  rules[idx].active = new_active
+}
+
+# 삭제 확인 모달 열기
+F handleDeleteRule(rule) {
+  selectedRule = rule
+  showDeleteModal = true
+}
+
+# 삭제 취소
+F cancelDelete() {
+  showDeleteModal = false
+  selectedRule = null
+}
+
+# 삭제 확인
+A F confirmDelete() {
+  if selectedRule == null {
+    R
+  }
+
+  deleting = true
+  let token = authStore.token
+  let response = Y fetch_delete_with_token("/api/v1/alerts/" + selectedRule.id, token)
+  let status = json_get(response, "status")
+
+  if status != "200" && status != "204" {
+    errorMessage = t('common.error')
+    deleting = false
+    showDeleteModal = false
+    R
+  }
+
+  # 로컬 목록에서 제거
+  rules = rules.filter(r => r.id != selectedRule.id)
+  deleting = false
+  showDeleteModal = false
+  selectedRule = null
+}
+
+# 초기 데이터 로드
+loadRules()
+</script>
+
+<style scoped>
+.alerts-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 페이지 헤더 */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: -0.3px;
+}
+
+.page-count {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  background: var(--color-hover);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+/* 버튼 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.btn-secondary {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-border);
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.btn-icon {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.btn-spinner-sm {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+/* 에러 알림 */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.alert-error {
+  background: var(--color-danger-muted);
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.alert-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.alert-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: currentColor;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.alert-close:hover {
+  opacity: 1;
+}
+
+/* 로딩 */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 240px;
+  gap: 12px;
+  color: var(--color-text-secondary);
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* 빈 상태 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 280px;
+  gap: 14px;
+  color: var(--color-text-muted);
+}
+
+.empty-icon {
+  font-size: 40px;
+  opacity: 0.35;
+}
+
+.empty-title {
+  font-size: 15px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* 테이블 */
+.table-container {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table thead tr {
+  background: var(--color-hover);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.data-table th {
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 14px 16px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.table-row:last-child td {
+  border-bottom: none;
+}
+
+.table-row:hover td {
+  background: var(--color-hover);
+}
+
+.rule-name {
+  font-weight: 500;
+}
+
+.condition-code {
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 12px;
+  background: var(--color-hover);
+  padding: 3px 8px;
+  border-radius: 4px;
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+/* 토글 스위치 */
+.cell-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--color-border);
+  border-radius: 20px;
+  transition: background 0.2s;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  left: 3px;
+  top: 3px;
+  background: #ffffff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--color-success);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+}
+
+.toggle-label {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.toggle-label.active {
+  color: var(--color-success);
+}
+
+/* 심각도 배지 */
+.severity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.severity-critical {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-danger);
+}
+
+.severity-warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--color-warning);
+}
+
+.severity-info {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--color-info);
+}
+
+/* 채널 태그 */
+.channel-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  font-weight: 500;
+}
+
+/* 액션 버튼 */
+.cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  color: var(--color-text-secondary);
+}
+
+.edit-btn:hover {
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.delete-btn:hover {
+  background: var(--color-danger-muted);
+  color: var(--color-danger);
+  border-color: var(--color-danger);
+}
+
+/* 모달 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+  padding: 16px;
+}
+
+.modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.18);
+}
+
+.modal-header {
+  padding: 20px 20px 0;
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.modal-body {
+  padding: 16px 20px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.delete-target-name {
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-top: 6px;
+}
+
+.modal-footer {
+  padding: 0 20px 20px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .table-container {
+    overflow-x: auto;
+  }
+
+  .data-table {
+    min-width: 640px;
+  }
+}
+</style>

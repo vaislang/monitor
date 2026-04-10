@@ -1,0 +1,6 @@
+
+F test_main() {
+    cfg := ServerConfig::from_env()
+    init_db()
+    server_listen(cfg.host, cfg.port)
+}

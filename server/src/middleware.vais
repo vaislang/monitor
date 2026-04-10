@@ -1,0 +1,178 @@
+
+# 인증 필수 헬퍼 — claims JSON 반환, 실패 시 ""
+F require_auth(headers: str) -> str {
+    token := extract_token_from_headers(headers)
+    I str_len(token) == 0 {
+        R ""
+    }
+    cfg := ServerConfig::default()
+    claims := verify_token(token, cfg.jwt_secret)
+    claims
+}
+
+# 페이지네이션 파라미터 파싱
+# 반환: JSON {"page": N, "limit": N, "offset": N}
+F parse_pagination(params: str, default_limit: i64, max_limit: i64) -> str {
+    page_str := get_query_param(params, "page")
+    limit_str := get_query_param(params, "limit")
+
+    page := I str_len(page_str) > 0 { str_to_i64(page_str) } EL { 1 }
+    I page < 1 { page = 1 }
+
+    limit := I str_len(limit_str) > 0 { str_to_i64(limit_str) } EL { default_limit }
+    I limit < 1 { limit = 1 }
+    I limit > max_limit { limit = max_limit }
+
+    offset := (page - 1) * limit
+
+    result := "{}"
+    result := json_set(result, "page", i64_to_str(page))
+    result := json_set(result, "limit", i64_to_str(limit))
+    result := json_set(result, "offset", i64_to_str(offset))
+    result
+}
+
+# Auth guard — JWT 토큰 검증, Context에 user_id/role 주입
+# Authorization 헤더에서 Bearer 토큰 추출
+# jwt_decode로 검증
+# 실패시 401 JSON 응답 반환
+# 성공시 "" (빈 문자열) 반환 → 다음 핸들러 진행
+F auth_guard(method: str, path: str, headers: str, body: str) -> str {
+    # Authorization 헤더에서 Bearer 토큰 추출
+    auth_prefix := "Authorization: Bearer "
+    bearer_found := str_contains(headers, auth_prefix)
+
+    I !bearer_found {
+        response := "{\"error\": \"Unauthorized\", \"message\": \"Missing Authorization header\"}"
+        R "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n" + response
+    }
+
+    # 헤더에서 토큰 값 추출
+    header_lines := str_split(headers, "\n")
+    token := ""
+    i := 0
+    LW i < str_split_count(header_lines) {
+        line := str_trim(json_get(header_lines, i64_to_str(i)))
+        I str_starts_with(line, auth_prefix) {
+            prefix_len := str_len(auth_prefix)
+            line_len := str_len(line)
+            token = str_slice(line, prefix_len, line_len)
+        }
+        i = i + 1
+    }
+
+    I str_len(token) == 0 {
+        response := "{\"error\": \"Unauthorized\", \"message\": \"Empty Bearer token\"}"
+        R "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n" + response
+    }
+
+    # JWT 시크릿을 config에서 가져오기 (랜덤 생성 포함)
+    cfg := ServerConfig::from_env()
+    jwt_secret := cfg.jwt_secret
+
+    # JWT 토큰 검증
+    claims := jwt_decode(token, jwt_secret)
+
+    I str_len(claims) == 0 {
+        response := "{\"error\": \"Unauthorized\", \"message\": \"Invalid or expired token\"}"
+        R "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n" + response
+    }
+
+    # claims에서 sub(user_id) 확인
+    user_id := json_get(claims, "sub")
+    I str_len(user_id) == 0 {
+        response := "{\"error\": \"Unauthorized\", \"message\": \"Token missing subject claim\"}"
+        R "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n" + response
+    }
+
+    # Rate limit 체크 — 분당 60요청
+    I !check_rate_limit(path, 60, 60000) {
+        R error_response(429, "Too Many Requests")
+    }
+
+    # 성공 — 빈 문자열 반환 → 다음 핸들러 진행
+    ""
+}
+
+# Role check — user_role이 required 역할과 같거나 상위 권한인지 확인
+# 역할 계층: admin > member > viewer
+F require_role(user_role: str, required: str) -> bool {
+    I user_role == required {
+        R true
+    }
+
+    I required == "viewer" {
+        # viewer 이상: viewer, member, admin 모두 허용
+        R user_role == "member" || user_role == "admin"
+    }
+
+    I required == "member" {
+        # member 이상: member, admin 허용
+        R user_role == "admin"
+    }
+
+    I required == "admin" {
+        # admin만 허용
+        R user_role == "admin"
+    }
+
+    false
+}
+
+# Rate limit state — 슬라이딩 윈도우 in-memory 저장소
+# key → "timestamp1,timestamp2,..." 형태
+G rate_limit_data: str = "{}"
+
+# Rate limit 체크 — 슬라이딩 윈도우 방식
+# true = 허용, false = 한도 초과
+F check_rate_limit(key: str, max_requests: i64, window_ms: i64) -> bool {
+    now := current_time_ms()
+
+    # 현재 키의 타임스탬프 목록 가져오기
+    timestamps_str := json_get(rate_limit_data, key)
+
+    # 윈도우 내 요청 수 계산
+    count := 0
+    new_timestamps := ""
+
+    I str_len(timestamps_str) > 0 {
+        parts := str_split(timestamps_str, ",")
+        parts_count := str_split_count(parts)
+        i := 0
+        LW i < parts_count {
+            ts_str := json_get(parts, i64_to_str(i))
+            ts := str_to_i64(ts_str)
+            I now - ts < window_ms {
+                I str_len(new_timestamps) > 0 {
+                    new_timestamps = new_timestamps + ","
+                }
+                new_timestamps = new_timestamps + ts_str
+                count = count + 1
+            }
+            i = i + 1
+        }
+    }
+
+    # 현재 요청 추가
+    I str_len(new_timestamps) > 0 {
+        new_timestamps = new_timestamps + "," + i64_to_str(now)
+    } EL {
+        new_timestamps = i64_to_str(now)
+    }
+
+    # 저장
+    rate_limit_data = json_set(rate_limit_data, key, new_timestamps)
+
+    # 제한 초과 체크
+    count < max_requests
+}
+
+# Request logging — 요청 정보를 로그로 출력
+F log_request(method: str, path: str, status: i64, duration_ms: i64) {
+    ts := current_time_ms()
+    ts_str := i64_to_str(ts)
+    status_str := i64_to_str(status)
+    duration_str := i64_to_str(duration_ms)
+    log_line := "[" + ts_str + "] " + method + " " + path + " " + status_str + " " + duration_str + "ms"
+    println(log_line)
+}

@@ -1,0 +1,518 @@
+
+# ============================================================================
+# GET /api/v1/services — 서비스 목록 (필터, 페이징)
+# ============================================================================
+# RLS: 현재 사용자의 team_id 기반 필터
+# 쿼리 파라미터: ?status=up&tag=backend&page=1&limit=20
+F handle_list_services(headers: str, query: str) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    # 쿼리 파라미터 파싱
+    status_filter := get_query_param(query, "status")
+    tag_filter := get_query_param(query, "tag")
+    paging := parse_pagination(query, 20, 100)
+    page := str_to_i64(json_get(paging, "page"))
+    limit := str_to_i64(json_get(paging, "limit"))
+    offset := str_to_i64(json_get(paging, "offset"))
+
+    services_arr := list_services(team_id, status_filter, tag_filter, limit, offset)
+    total := count_services(team_id, status_filter, tag_filter)
+
+    resp_body := "{\"services\":" + services_arr +
+        ",\"total\":" + i64_to_str(total) +
+        ",\"page\":" + i64_to_str(page) +
+        ",\"limit\":" + i64_to_str(limit) + "}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# POST /api/v1/services — 서비스 등록
+# ============================================================================
+# body: {"name": "...", "url": "...", "health_endpoint": "/health", "check_interval_sec": 60, "tags": "backend,api"}
+# 트랜잭션: INSERT service + Graph 노드 생성
+# 201 응답
+F handle_create_service(headers: str, body: str) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    name := json_get(body, "name")
+    I str_len(name) == 0 {
+        R error_response(400, "name is required")
+    }
+
+    url := json_get(body, "url")
+    I str_len(url) == 0 {
+        R error_response(400, "url is required")
+    }
+
+    health_endpoint_raw := json_get(body, "health_endpoint")
+    health_endpoint := I str_len(health_endpoint_raw) > 0 { health_endpoint_raw } EL { "/health" }
+
+    check_interval_str := json_get(body, "check_interval_sec")
+    check_interval := I str_len(check_interval_str) > 0 { str_to_i64(check_interval_str) } EL { 60 }
+    check_interval := I check_interval < 1 { 60 } EL { check_interval }
+
+    tags := json_get(body, "tags")
+
+    # 트랜잭션 시작
+    committed := false
+    db_begin_transaction()
+    D {
+        I !committed {
+            db_rollback()
+        }
+    }
+
+    service_id := create_service(team_id, name, url, health_endpoint, check_interval, tags)
+    I service_id == 0 {
+        R error_response(500, "Failed to create service")
+    }
+
+    # Graph 노드 생성
+    graph_result := create_service_graph_node(service_id, name, "unknown")
+    I graph_result == 0 {
+        R error_response(500, "Failed to create service graph node")
+    }
+
+    db_commit()
+    committed = true
+
+    service_json := find_service_by_id(service_id)
+    resp_body := "{\"service\":" + service_json + "}"
+    json_response(201, resp_body)
+}
+
+# ============================================================================
+# GET /api/v1/services/:id — 서비스 상세
+# ============================================================================
+# RLS: 같은 팀 체크
+# 의존성 목록도 포함
+F handle_get_service(headers: str, service_id: i64) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    service_json := find_service_by_id(service_id)
+    I str_len(service_json) == 0 {
+        R error_response(404, "Service not found")
+    }
+
+    # RLS: 같은 팀인지 확인
+    service_team_id := str_to_i64(json_get(service_json, "team_id"))
+    I service_team_id != team_id {
+        R error_response(403, "Access denied")
+    }
+
+    # 의존성 목록 포함
+    deps := list_dependencies(service_id)
+    dependents := list_dependents(service_id)
+
+    resp_body := "{\"service\":" + service_json +
+        ",\"dependencies\":" + deps +
+        ",\"dependents\":" + dependents + "}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# PUT /api/v1/services/:id — 서비스 수정
+# ============================================================================
+# require_role("member") 이상
+F handle_update_service(headers: str, service_id: i64, body: str) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    current_role := get_current_user_role(headers)
+    I str_len(current_role) == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    # member 이상 역할 확인
+    allowed_role := require_role(current_role, "member")
+    I !allowed_role {
+        R error_response(403, "Insufficient permissions: member role required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    service_json := find_service_by_id(service_id)
+    I str_len(service_json) == 0 {
+        R error_response(404, "Service not found")
+    }
+
+    # RLS: 같은 팀인지 확인
+    service_team_id := str_to_i64(json_get(service_json, "team_id"))
+    I service_team_id != team_id {
+        R error_response(403, "Access denied")
+    }
+
+    # 기존 값을 기본으로 사용하고 body에서 덮어쓰기
+    new_name_raw := json_get(body, "name")
+    new_name := I str_len(new_name_raw) > 0 { new_name_raw } EL { json_get(service_json, "name") }
+
+    new_url_raw := json_get(body, "url")
+    new_url := I str_len(new_url_raw) > 0 { new_url_raw } EL { json_get(service_json, "url") }
+
+    new_endpoint_raw := json_get(body, "health_endpoint")
+    new_endpoint := I str_len(new_endpoint_raw) > 0 { new_endpoint_raw } EL { json_get(service_json, "health_endpoint") }
+
+    new_interval_str := json_get(body, "check_interval_sec")
+    new_interval := I str_len(new_interval_str) > 0 {
+        str_to_i64(new_interval_str)
+    } EL {
+        str_to_i64(json_get(service_json, "check_interval_sec"))
+    }
+    new_interval := I new_interval < 1 { 60 } EL { new_interval }
+
+    new_tags_raw := json_get(body, "tags")
+    new_tags := I str_len(new_tags_raw) > 0 { new_tags_raw } EL { json_get(service_json, "tags") }
+
+    update_service(service_id, new_name, new_url, new_endpoint, new_interval, new_tags)
+
+    updated_json := find_service_by_id(service_id)
+    resp_body := "{\"service\":" + updated_json + "}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# DELETE /api/v1/services/:id — 서비스 삭제
+# ============================================================================
+# require_role("admin")
+# 트랜잭션: DELETE service + Graph 노드 삭제 + 관련 의존성 삭제
+F handle_delete_service(headers: str, service_id: i64) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    current_role := get_current_user_role(headers)
+    I str_len(current_role) == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    # admin 역할 확인
+    is_admin := require_role(current_role, "admin")
+    I !is_admin {
+        R error_response(403, "Insufficient permissions: admin role required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    service_json := find_service_by_id(service_id)
+    I str_len(service_json) == 0 {
+        R error_response(404, "Service not found")
+    }
+
+    # RLS: 같은 팀인지 확인
+    service_team_id := str_to_i64(json_get(service_json, "team_id"))
+    I service_team_id != team_id {
+        R error_response(403, "Access denied")
+    }
+
+    # 트랜잭션 시작
+    db_begin_transaction()
+
+    # 관련 의존성 삭제 (이 서비스가 의존하거나, 이 서비스를 의존하는 모든 관계)
+    db_execute("DELETE FROM service_dependencies WHERE service_id = " + i64_to_str(service_id))
+    db_execute("DELETE FROM service_dependencies WHERE depends_on_id = " + i64_to_str(service_id))
+
+    # Graph 노드 삭제 (연결된 엣지도 함께 삭제)
+    delete_service_graph_node(service_id)
+
+    # 서비스 삭제
+    deleted := delete_service(service_id)
+    I deleted == 0 {
+        db_rollback()
+        R error_response(500, "Failed to delete service")
+    }
+
+    db_commit()
+
+    resp_body := "{\"message\":\"Service deleted successfully\",\"id\":" + i64_to_str(service_id) + "}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# POST /api/v1/services/:id/dependencies — 의존성 추가
+# ============================================================================
+# body: {"depends_on_id": N}
+# Graph 엣지도 생성
+F handle_add_dependency(headers: str, service_id: i64, body: str) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    current_role := get_current_user_role(headers)
+    allowed_role := require_role(current_role, "member")
+    I !allowed_role {
+        R error_response(403, "Insufficient permissions: member role required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    service_json := find_service_by_id(service_id)
+    I str_len(service_json) == 0 {
+        R error_response(404, "Service not found")
+    }
+
+    # RLS: 같은 팀인지 확인
+    service_team_id := str_to_i64(json_get(service_json, "team_id"))
+    I service_team_id != team_id {
+        R error_response(403, "Access denied")
+    }
+
+    depends_on_id_str := json_get(body, "depends_on_id")
+    I str_len(depends_on_id_str) == 0 {
+        R error_response(400, "depends_on_id is required")
+    }
+    depends_on_id := str_to_i64(depends_on_id_str)
+    I depends_on_id == 0 {
+        R error_response(400, "depends_on_id must be a valid service ID")
+    }
+
+    # 자기 자신에 의존 불가
+    I depends_on_id == service_id {
+        R error_response(400, "A service cannot depend on itself")
+    }
+
+    # 대상 서비스 존재 및 같은 팀 확인
+    target_json := find_service_by_id(depends_on_id)
+    I str_len(target_json) == 0 {
+        R error_response(404, "Target service not found")
+    }
+    target_team_id := str_to_i64(json_get(target_json, "team_id"))
+    I target_team_id != team_id {
+        R error_response(403, "Target service belongs to a different team")
+    }
+
+    # 트랜잭션 시작
+    db_begin_transaction()
+
+    dep_id := add_dependency(service_id, depends_on_id)
+    I dep_id == 0 {
+        db_rollback()
+        R error_response(500, "Failed to add dependency")
+    }
+
+    # Graph 엣지 생성
+    edge_result := create_dependency_edge(service_id, depends_on_id)
+    I edge_result == 0 {
+        db_rollback()
+        R error_response(500, "Failed to create dependency graph edge")
+    }
+
+    db_commit()
+
+    resp_body := "{\"message\":\"Dependency added successfully\"" +
+        ",\"id\":" + i64_to_str(dep_id) +
+        ",\"service_id\":" + i64_to_str(service_id) +
+        ",\"depends_on_id\":" + i64_to_str(depends_on_id) + "}"
+    json_response(201, resp_body)
+}
+
+# ============================================================================
+# DELETE /api/v1/services/:id/dependencies/:dep_id — 의존성 삭제
+# ============================================================================
+F handle_remove_dependency(headers: str, service_id: i64, dep_id: i64) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    current_role := get_current_user_role(headers)
+    allowed_role := require_role(current_role, "member")
+    I !allowed_role {
+        R error_response(403, "Insufficient permissions: member role required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    service_json := find_service_by_id(service_id)
+    I str_len(service_json) == 0 {
+        R error_response(404, "Service not found")
+    }
+
+    # RLS: 같은 팀인지 확인
+    service_team_id := str_to_i64(json_get(service_json, "team_id"))
+    I service_team_id != team_id {
+        R error_response(403, "Access denied")
+    }
+
+    # 의존성 레코드 조회 (dep_id는 service_dependencies.id)
+    dep_row := db_query(
+        "SELECT id, service_id, depends_on_id FROM service_dependencies WHERE id = " +
+        i64_to_str(dep_id) + " AND service_id = " + i64_to_str(service_id) + " LIMIT 1"
+    )
+    dep_row_id_str := json_get(dep_row, "id")
+    I str_len(dep_row_id_str) == 0 {
+        R error_response(404, "Dependency not found")
+    }
+
+    depends_on_id := str_to_i64(json_get(dep_row, "depends_on_id"))
+
+    # 트랜잭션 시작
+    db_begin_transaction()
+
+    # Graph 엣지 삭제
+    delete_dependency_edge(service_id, depends_on_id)
+
+    # 의존성 레코드 삭제
+    removed := remove_dependency(dep_id)
+    I removed == 0 {
+        db_rollback()
+        R error_response(500, "Failed to remove dependency")
+    }
+
+    db_commit()
+
+    resp_body := "{\"message\":\"Dependency removed successfully\",\"id\":" + i64_to_str(dep_id) + "}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# GET /api/v1/services/:id/metrics — 서비스 메트릭 (stub)
+# ============================================================================
+F handle_get_service_metrics(headers: str, service_id: i64, query: str) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    service_json := find_service_by_id(service_id)
+    I str_len(service_json) == 0 {
+        R error_response(404, "Service not found")
+    }
+
+    # RLS: 같은 팀인지 확인
+    service_team_id := str_to_i64(json_get(service_json, "team_id"))
+    I service_team_id != team_id {
+        R error_response(403, "Access denied")
+    }
+
+    # stub: metrics API에서 구현 예정
+    resp_body := "{\"service_id\":" + i64_to_str(service_id) +
+        ",\"metrics\":[]" +
+        ",\"message\":\"Metrics endpoint not yet implemented — see metrics API\"}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# GET /api/v1/services/:id/logs — 서비스 로그 (stub)
+# ============================================================================
+F handle_get_service_logs(headers: str, service_id: i64, query: str) -> str {
+    user_id := get_current_user_id(headers)
+    I user_id == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    team_id := get_current_user_team_id(headers)
+    I team_id == 0 {
+        R error_response(403, "User is not associated with a team")
+    }
+
+    service_json := find_service_by_id(service_id)
+    I str_len(service_json) == 0 {
+        R error_response(404, "Service not found")
+    }
+
+    # RLS: 같은 팀인지 확인
+    service_team_id := str_to_i64(json_get(service_json, "team_id"))
+    I service_team_id != team_id {
+        R error_response(403, "Access denied")
+    }
+
+    # stub: logs API에서 구현 예정
+    resp_body := "{\"service_id\":" + i64_to_str(service_id) +
+        ",\"logs\":[]" +
+        ",\"message\":\"Logs endpoint not yet implemented — see logs API\"}"
+    json_response(200, resp_body)
+}
+
+F handle_services(method: str, path: str, headers: str, body: str) -> str {
+    path_parts := str_split(path, "?")
+    path_only := json_get(path_parts, "0")
+    query_params := json_get(path_parts, "1")
+    I method == "DELETE" && str_contains(path_only, "/dependencies/") {
+        segments := str_split(path_only, "/")
+        service_id := str_to_i64(json_get(segments, "4"))
+        dep_id := str_to_i64(json_get(segments, "6"))
+        R handle_remove_dependency(headers, service_id, dep_id)
+    }
+    I method == "POST" && str_contains(path_only, "/dependencies") {
+        segments := str_split(path_only, "/")
+        service_id := str_to_i64(json_get(segments, "4"))
+        R handle_add_dependency(headers, service_id, body)
+    }
+    I method == "GET" && str_contains(path_only, "/metrics") {
+        segments := str_split(path_only, "/")
+        service_id := str_to_i64(json_get(segments, "4"))
+        R handle_service_metrics(headers, service_id, query_params)
+    }
+    I method == "GET" && str_contains(path_only, "/logs") {
+        segments := str_split(path_only, "/")
+        service_id := str_to_i64(json_get(segments, "4"))
+        R handle_service_logs(headers, service_id, query_params)
+    }
+    I method == "GET" && (path_only == "/api/v1/services" || path_only == "/api/v1/services/") {
+        R handle_list_services(headers, query_params)
+    }
+    I method == "POST" && (path_only == "/api/v1/services" || path_only == "/api/v1/services/") {
+        R handle_create_service(headers, body)
+    }
+    I method == "GET" {
+        segments := str_split(path_only, "/")
+        service_id := str_to_i64(json_get(segments, "4"))
+        R handle_get_service(headers, service_id)
+    }
+    I method == "PUT" {
+        segments := str_split(path_only, "/")
+        service_id := str_to_i64(json_get(segments, "4"))
+        R handle_update_service(headers, service_id, body)
+    }
+    I method == "DELETE" {
+        segments := str_split(path_only, "/")
+        service_id := str_to_i64(json_get(segments, "4"))
+        R handle_delete_service(headers, service_id)
+    }
+    error_response(404, "Services route not found")
+}

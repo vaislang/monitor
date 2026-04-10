@@ -1,0 +1,40 @@
+
+F json_response_a(status: i64, body: str) -> str {
+    I status == 200 { R "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + body }
+    I status == 201 { R "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\n\r\n" + body }
+    I status == 204 { R "HTTP/1.1 204 No Content\r\nContent-Type: application/json\r\n\r\n" }
+    R ""
+}
+
+F json_response_b(status: i64, body: str) -> str {
+    I status == 400 { R "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n\r\n" + body }
+    I status == 401 { R "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n\r\n" + body }
+    I status == 403 { R "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\n\r\n" + body }
+    R ""
+}
+
+F json_response_c(status: i64, body: str) -> str {
+    I status == 404 { R "HTTP/1.1 404 Not Found\r\nContent-Type: application/json\r\n\r\n" + body }
+    I status == 409 { R "HTTP/1.1 409 Conflict\r\nContent-Type: application/json\r\n\r\n" + body }
+    I status == 422 { R "HTTP/1.1 422 Unprocessable Entity\r\nContent-Type: application/json\r\n\r\n" + body }
+    "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n\r\n" + body
+}
+
+F json_response_d(status: i64, body: str) -> str {
+    I status == 429 { R "HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\n\r\n" + body }
+    json_response_c(status, body)
+}
+
+F json_response(status: i64, body: str) -> str {
+    ra := json_response_a(status, body)
+    I str_len(ra) > 0 { R ra }
+    rb := json_response_b(status, body)
+    I str_len(rb) > 0 { R rb }
+    json_response_d(status, body)
+}
+
+F error_response(status: i64, message: str) -> str {
+    safe_message := str_replace(message, "\"", "\\\"")
+    body := "{\"error\": \"" + safe_message + "\"}"
+    json_response(status, body)
+}

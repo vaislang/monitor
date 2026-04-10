@@ -1,0 +1,87 @@
+U runtime
+U response
+U config
+U db
+U middleware
+U token
+U auth
+U models/user
+U models/service
+U models/metric
+U models/log_entry
+U models/alert
+U models/embedding
+U models/incident
+U api/users
+U api/services
+U api/metrics
+U api/logs
+U api/alerts
+U api/incidents
+U api/search
+U api/graph
+U api/ai
+U api/admin
+U router
+U handler_chain
+U dispatcher
+U graph/engine
+U rag/chunker
+U rag/pipeline
+U graphql/schema
+U graphql/resolvers
+U workers/healthcheck
+U workers/alert_eval
+U workers/anomaly
+U websocket/handler
+
+# 라우트 그룹 구성 (PRD 5.1절 기준):
+# /api/v1/auth/*
+# /api/v1/services/*
+# /api/v1/metrics/*
+# /api/v1/logs/*
+# /api/v1/alerts/*
+# /api/v1/incidents/*
+# /api/v1/graph/*
+# /api/v1/ai/*
+# /api/v1/admin/*
+# /ws/* (WebSocket)
+
+F main() {
+    cfg := ServerConfig::from_env()
+    init_db()
+    server_listen(cfg.host, cfg.port)
+}
+
+F serve_static(path: str) -> str {
+    I str_contains(path, "..") {
+        R error_response(403, "Forbidden")
+    }
+    file_path := "web" + path
+    I str_len(path) == 0 {
+        file_path = "web" + "/index.html"
+    }
+    content := read_file(file_path)
+    I str_len(content) == 0 {
+        index := read_file("web/index.html")
+        I str_len(index) > 0 {
+            R "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + index
+        }
+        R ""
+    }
+    "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n" + content
+}
+
+# ---------------------------------------------------------------------------
+# WebSocket 핸들러
+# WS /ws/metrics  — 실시간 메트릭 스트리밍
+# WS /ws/alerts   — 실시간 알림
+# WS /ws/status   — 서비스 상태 변경 알림
+# handle_websocket은 websocket/handler.vais에 구현되어 있으며 U websocket/handler로 임포트됨.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# 라우트 디스패치 — 경로 이름으로 핸들러 선택
+# ---------------------------------------------------------------------------
+
+

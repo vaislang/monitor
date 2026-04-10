@@ -1,0 +1,654 @@
+<template>
+  <div class="incidents-page">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <div class="page-header-left">
+        <h2 class="page-title">{t('incidents.title')}</h2>
+        <span class="page-count">{filteredIncidents.length} {t('common.total')}</span>
+      </div>
+      <button class="refresh-btn" @click="loadIncidents" disabled={loading} title={t('common.refresh')}>
+        <span class="refresh-icon" class:spinning={loading}>↻</span>
+      </button>
+    </div>
+
+    <!-- 필터 바 -->
+    <div class="filter-bar">
+      <!-- 상태 필터 -->
+      <div class="filter-group">
+        <button
+          class="filter-btn"
+          class:active={statusFilter == 'all'}
+          @click={e => setStatusFilter('all')}
+        >
+          {t('common.all')}
+          <span class="filter-badge">{incidents.length}</span>
+        </button>
+        <button
+          class="filter-btn"
+          class:active={statusFilter == 'open'}
+          @click={e => setStatusFilter('open')}
+        >
+          {t('incidents.status.open')}
+          <span class="filter-badge badge-open">{countByStatus('open')}</span>
+        </button>
+        <button
+          class="filter-btn"
+          class:active={statusFilter == 'acknowledged'}
+          @click={e => setStatusFilter('acknowledged')}
+        >
+          {t('incidents.status.acknowledged')}
+          <span class="filter-badge badge-ack">{countByStatus('acknowledged')}</span>
+        </button>
+        <button
+          class="filter-btn"
+          class:active={statusFilter == 'resolved'}
+          @click={e => setStatusFilter('resolved')}
+        >
+          {t('incidents.status.resolved')}
+          <span class="filter-badge badge-resolved">{countByStatus('resolved')}</span>
+        </button>
+      </div>
+
+      <!-- 심각도 필터 -->
+      <div class="filter-group">
+        <select class="severity-select" bind:value={severityFilter} @change="applyFilters">
+          <option value="all">{t('common.all')} Severity</option>
+          <option value="critical">{t('incidents.severity.critical')}</option>
+          <option value="high">{t('incidents.severity.high')}</option>
+          <option value="medium">{t('incidents.severity.medium')}</option>
+          <option value="low">{t('incidents.severity.low')}</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 에러 메시지 -->
+    {#if errorMessage}
+      <div class="alert alert-error" role="alert">
+        <span class="alert-icon">⚠</span>
+        <span>{errorMessage}</span>
+        <button class="alert-close" @click="clearError">✕</button>
+      </div>
+    {/if}
+
+    <!-- 로딩 상태 -->
+    {#if loading}
+      <div class="loading-container">
+        <div class="spinner"></div>
+        <span>{t('common.loading')}</span>
+      </div>
+    {:else if filteredIncidents.length == 0}
+      <!-- 빈 상태 -->
+      <div class="empty-state">
+        <span class="empty-icon">⛔</span>
+        <p class="empty-title">{t('incidents.noIncidents')}</p>
+      </div>
+    {:else}
+      <!-- 인시던트 목록 -->
+      <div class="incident-list">
+        {#each filteredIncidents as incident}
+          <div class="incident-card" @click={e => handleViewIncident(incident)} tabindex="0" role="button" @keydown={e => { if (e.key === 'Enter' || e.key === ' ') { handleViewIncident(incident) } }}>
+            <div class="incident-left">
+              <div class="incident-severity-bar" class:bar-critical={incident.severity == 'critical'} class:bar-high={incident.severity == 'high'} class:bar-medium={incident.severity == 'medium'} class:bar-low={incident.severity == 'low'}></div>
+              <div class="incident-content">
+                <div class="incident-header-row">
+                  <h3 class="incident-title">{incident.title}</h3>
+                  <span class="status-badge"
+                    class:status-open={incident.status == 'open'}
+                    class:status-ack={incident.status == 'acknowledged'}
+                    class:status-resolved={incident.status == 'resolved'}
+                  >
+                    {t('incidents.status.' + incident.status)}
+                  </span>
+                </div>
+                <div class="incident-meta">
+                  <span class="meta-item">
+                    <span class="meta-icon">◈</span>
+                    <span>{incident.service_name}</span>
+                  </span>
+                  <span class="meta-item">
+                    <span class="meta-icon">⏱</span>
+                    <span>{formatTime(incident.created_at)}</span>
+                  </span>
+                  {#if incident.assignee}
+                    <span class="meta-item">
+                      <span class="meta-icon">◎</span>
+                      <span>{incident.assignee}</span>
+                    </span>
+                  {/if}
+                </div>
+              </div>
+            </div>
+            <div class="incident-right">
+              <span class="severity-badge"
+                class:severity-critical={incident.severity == 'critical'}
+                class:severity-high={incident.severity == 'high'}
+                class:severity-medium={incident.severity == 'medium'}
+                class:severity-low={incident.severity == 'low'}
+              >
+                {t('incidents.severity.' + incident.severity)}
+              </span>
+              <span class="chevron-icon">›</span>
+            </div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
+</template>
+
+<script>
+import { t } from '../../i18n.vais'
+import { authStore } from '../../stores/auth.vais'
+
+# 상태
+let incidents = []
+let filteredIncidents = []
+let loading = false
+let errorMessage = ''
+let statusFilter = 'all'
+let severityFilter = 'all'
+
+F clearError() {
+  errorMessage = ''
+}
+
+# 상태별 카운트
+F countByStatus(status: str) -> i64 {
+  let count = 0
+  for inc in incidents {
+    if inc.status == status {
+      count = count + 1
+    }
+  }
+  count
+}
+
+# 시간 포맷 (ISO → 상대 시간)
+F formatTime(iso: str) -> str {
+  if str_len(iso) == 0 {
+    R ""
+  }
+  let d = new Date(iso)
+  let now = new Date()
+  let diff_ms = now - d
+  let diff_sec = Math.floor(diff_ms / 1000)
+  let diff_min = Math.floor(diff_sec / 60)
+  let diff_hour = Math.floor(diff_min / 60)
+  let diff_day = Math.floor(diff_hour / 24)
+
+  if diff_sec < 60 {
+    diff_sec + "s ago"
+  } else if diff_min < 60 {
+    diff_min + "m ago"
+  } else if diff_hour < 24 {
+    diff_hour + "h ago"
+  } else {
+    diff_day + "d ago"
+  }
+}
+
+# 상태 필터 변경
+F setStatusFilter(status: str) {
+  statusFilter = status
+  applyFilters()
+}
+
+# 필터 적용
+F applyFilters() {
+  filteredIncidents = incidents.filter(function(inc) {
+    let statusOk = statusFilter == 'all' || inc.status == statusFilter
+    let severityOk = severityFilter == 'all' || inc.severity == severityFilter
+    statusOk && severityOk
+  })
+}
+
+# 인시던트 목록 로드
+A F loadIncidents() {
+  loading = true
+  errorMessage = ''
+
+  let token = authStore.token
+  let response = Y fetch_get_with_token("/api/v1/incidents", token)
+  let status = json_get(response, "status")
+
+  if status != "200" {
+    errorMessage = t('common.error')
+    loading = false
+    R
+  }
+
+  let resp_body = json_get(response, "body")
+  let data = json_get(resp_body, "data")
+  incidents = json_parse_array(data)
+  applyFilters()
+  loading = false
+}
+
+# 인시던트 상세 페이지로 이동
+F handleViewIncident(incident) {
+  window.router.navigate('/incidents/' + incident.id)
+}
+
+# 초기 데이터 로드
+loadIncidents()
+</script>
+
+<style scoped>
+.incidents-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 페이지 헤더 */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: -0.3px;
+}
+
+.page-count {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  background: var(--color-hover);
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.refresh-btn {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 8px 10px;
+  color: var(--color-text-secondary);
+  transition: background 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.refresh-btn:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.refresh-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.refresh-icon {
+  font-size: 18px;
+  line-height: 1;
+  display: inline-block;
+}
+
+.refresh-icon.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+/* 필터 바 */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.filter-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.filter-btn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.filter-btn.active {
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.filter-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.badge-open {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-danger);
+}
+
+.badge-ack {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+}
+
+.badge-resolved {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--color-success);
+}
+
+.severity-select {
+  padding: 7px 32px 7px 12px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%236b7280' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: border-color 0.15s;
+}
+
+.severity-select:focus {
+  border-color: var(--color-primary);
+}
+
+/* 에러 */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.alert-error {
+  background: var(--color-danger-muted);
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.alert-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.alert-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: currentColor;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.alert-close:hover {
+  opacity: 1;
+}
+
+/* 로딩 */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 240px;
+  gap: 12px;
+  color: var(--color-text-secondary);
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+/* 빈 상태 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 280px;
+  gap: 14px;
+  color: var(--color-text-muted);
+}
+
+.empty-icon {
+  font-size: 40px;
+  opacity: 0.3;
+}
+
+.empty-title {
+  font-size: 15px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+/* 인시던트 카드 목록 */
+.incident-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.incident-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.incident-card:hover {
+  border-color: var(--color-primary);
+  box-shadow: 0 2px 12px rgba(99, 102, 241, 0.1);
+  transform: translateY(-1px);
+}
+
+.incident-left {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  min-width: 0;
+  flex: 1;
+}
+
+.incident-severity-bar {
+  width: 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  min-height: 40px;
+}
+
+.bar-critical { background: var(--color-danger); }
+.bar-high     { background: #f97316; }
+.bar-medium   { background: var(--color-warning); }
+.bar-low      { background: var(--color-info); }
+
+.incident-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.incident-header-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.incident-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 상태 배지 */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.status-open {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-danger);
+}
+
+.status-ack {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--color-warning);
+}
+
+.status-resolved {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-success);
+}
+
+/* 메타 정보 */
+.incident-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.meta-icon {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* 우측 영역 */
+.incident-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.severity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.severity-critical {
+  background: rgba(239, 68, 68, 0.12);
+  color: var(--color-danger);
+}
+
+.severity-high {
+  background: rgba(249, 115, 22, 0.12);
+  color: #f97316;
+}
+
+.severity-medium {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--color-warning);
+}
+
+.severity-low {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--color-info);
+}
+
+.chevron-icon {
+  font-size: 20px;
+  color: var(--color-text-muted);
+  line-height: 1;
+}
+
+@media (max-width: 640px) {
+  .filter-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .incident-right {
+    flex-direction: column;
+    gap: 6px;
+    align-items: flex-end;
+  }
+}
+</style>

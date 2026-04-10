@@ -1,0 +1,1781 @@
+<template>
+  <div class="service-detail-page">
+    <!-- 로딩 -->
+    {#if loading}
+      <div class="detail-loading">
+        <div class="spinner"></div>
+        <span>{t('common.loading')}</span>
+      </div>
+
+    {:else if errorMessage && !service}
+      <!-- 로드 실패 -->
+      <div class="error-state">
+        <div class="error-icon">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="var(--color-danger)" stroke-width="1.5">
+            <circle cx="24" cy="24" r="20" />
+            <path d="M24 15v10M24 33v1" stroke-linecap="round" />
+          </svg>
+        </div>
+        <p class="error-title">{t('common.error')}</p>
+        <p class="error-subtitle">{errorMessage}</p>
+        <div class="error-actions">
+          <button class="btn btn-secondary" @click="loadService">{t('common.retry')}</button>
+          <button class="btn btn-ghost" @click="goBack">{t('common.back')}</button>
+        </div>
+      </div>
+
+    {:else if service}
+      <!-- 상단 네비게이션 -->
+      <div class="breadcrumb">
+        <button class="back-btn" @click="goBack">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path fill-rule="evenodd" d="M15 8a.5.5 0 00-.5-.5H2.707l3.147-3.146a.5.5 0 10-.708-.708l-4 4a.5.5 0 000 .708l4 4a.5.5 0 00.708-.708L2.707 8.5H14.5A.5.5 0 0015 8z" />
+          </svg>
+          <span>{t('nav.services')}</span>
+        </button>
+        <span class="breadcrumb-sep">/</span>
+        <span class="breadcrumb-current">{service.name}</span>
+      </div>
+
+      <!-- 서비스 헤더 카드 -->
+      <div class="header-card">
+        <div class="header-card-left">
+          <div class="service-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="3" width="20" height="14" rx="2" />
+              <path d="M8 21h8M12 17v4" stroke-linecap="round" />
+            </svg>
+          </div>
+          <div class="header-info">
+            <div class="header-top-row">
+              <h1 class="service-name">{service.name}</h1>
+              <span class={`status-badge badge-${service.status}`}>{getStatusLabel(service.status)}</span>
+              {#if str_len(service.service_type) > 0}
+                <span class="type-tag">{service.service_type}</span>
+              {/if}
+            </div>
+            <p class="service-url">{service.url}</p>
+            {#if str_len(service.description) > 0}
+              <p class="service-desc">{service.description}</p>
+            {/if}
+          </div>
+        </div>
+        <div class="header-card-right">
+          <button class="btn btn-secondary" @click="openEditModal">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M12.854.146a.5.5 0 00-.707 0L10.5 1.793 14.207 5.5l1.647-1.646a.5.5 0 000-.708L12.854.146zm.646 6.061L9.793 2.5 3.293 9H3.5a.5.5 0 01.5.5v.5h.5a.5.5 0 01.5.5v.5h.5a.5.5 0 01.5.5v.5h.5a.5.5 0 01.5.5v.207l6.5-6.5zm-7.468 7.468A.5.5 0 016 13.5V13h-.5a.5.5 0 01-.5-.5V12h-.5a.5.5 0 01-.5-.5V11h-.5a.5.5 0 01-.5-.5V10h-.5a.499.499 0 01-.175-.032l-.179.178a.5.5 0 00-.11.168l-2 5a.5.5 0 00.65.65l5-2a.5.5 0 00.168-.11l.178-.178z" />
+            </svg>
+            <span>{t('common.edit')}</span>
+          </button>
+          <button class="btn btn-danger-outline" @click="openDeleteConfirm">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M5.5 5.5A.5.5 0 016 6v6a.5.5 0 01-1 0V6a.5.5 0 01.5-.5zm2.5 0a.5.5 0 01.5.5v6a.5.5 0 01-1 0V6a.5.5 0 01.5-.5zm3 .5a.5.5 0 00-1 0v6a.5.5 0 001 0V6z" />
+              <path fill-rule="evenodd" d="M14.5 3a1 1 0 01-1 1H13v9a2 2 0 01-2 2H5a2 2 0 01-2-2V4h-.5a1 1 0 01-1-1V2a1 1 0 011-1H6a1 1 0 011-1h2a1 1 0 011 1h3.5a1 1 0 011 1v1zM4.118 4L4 4.059V13a1 1 0 001 1h6a1 1 0 001-1V4.059L11.882 4H4.118zM2.5 3V2h11v1h-11z" />
+            </svg>
+            <span>{t('common.delete')}</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 에러 배너 -->
+      {#if errorMessage}
+        <div class="alert alert-error">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8.982 1.566a1.13 1.13 0 00-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 01-1.1 0L7.1 5.995A.905.905 0 018 5zm.002 6a1 1 0 110 2 1 1 0 010-2z" />
+          </svg>
+          <span>{errorMessage}</span>
+          <button class="alert-close" @click="dismissError">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor">
+              <path d="M2.146 2.854a.5.5 0 11.708-.708L7 6.293l4.146-4.147a.5.5 0 01.708.708L7.707 7l4.147 4.146a.5.5 0 01-.708.708L7 7.707l-4.146 4.147a.5.5 0 01-.708-.708L6.293 7 2.146 2.854z" />
+            </svg>
+          </button>
+        </div>
+      {/if}
+
+      <!-- 메트릭 요약 카드 -->
+      <div class="metrics-summary">
+        <div class="metric-card">
+          <div class="metric-label">응답 시간 (평균)</div>
+          <div class="metric-value">{metrics.avg_response_ms}<span class="metric-unit">ms</span></div>
+          <div class="metric-trend" class:trend-up={metrics.response_trend === 'up'} class:trend-down={metrics.response_trend === 'down'}>
+            {#if metrics.response_trend === 'up'}
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M6 1l5 10H1L6 1z" /></svg>
+              <span>악화</span>
+            {:else if metrics.response_trend === 'down'}
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M6 11L1 1h10L6 11z" /></svg>
+              <span>개선</span>
+            {:else}
+              <span>안정</span>
+            {/if}
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">가용성 (24h)</div>
+          <div class="metric-value metric-uptime">{metrics.uptime_percent}<span class="metric-unit">%</span></div>
+          <div class="metric-bar-wrap">
+            <div class="metric-bar">
+              <div class="metric-bar-fill" style="width: {metrics.uptime_percent}%"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">에러율 (1h)</div>
+          <div class="metric-value metric-error-rate">{metrics.error_rate_percent}<span class="metric-unit">%</span></div>
+          <div class="metric-hint">{metrics.error_count} errors / {metrics.request_count} requests</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">헬스체크 주기</div>
+          <div class="metric-value">{service.health_check_interval}<span class="metric-unit">s</span></div>
+          <div class="metric-hint">마지막 체크: {formatRelativeTime(service.last_checked_at)}</div>
+        </div>
+      </div>
+
+      <!-- 콘텐츠 그리드 -->
+      <div class="content-grid">
+        <!-- 서비스 정보 패널 -->
+        <div class="info-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">서비스 정보</h2>
+          </div>
+          <div class="info-list">
+            <div class="info-row">
+              <span class="info-label">{t('common.id')}</span>
+              <span class="info-value info-mono">{service.id}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">{t('services.endpoint')}</span>
+              <a class="info-value info-link" href={service.url} target="_blank" rel="noopener">{service.url}</a>
+            </div>
+            <div class="info-row">
+              <span class="info-label">{t('services.healthCheckUrl')}</span>
+              <span class="info-value info-mono">
+                {#if str_len(service.health_check_url) > 0}
+                  {service.health_check_url}
+                {:else}
+                  <span class="text-muted">—</span>
+                {/if}
+              </span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">{t('services.serviceType')}</span>
+              <span class="info-value">
+                {#if str_len(service.service_type) > 0}
+                  <span class="type-tag">{service.service_type}</span>
+                {:else}
+                  <span class="text-muted">—</span>
+                {/if}
+              </span>
+            </div>
+            {#if service.tags && service.tags.length > 0}
+              <div class="info-row">
+                <span class="info-label">태그</span>
+                <div class="info-tags">
+                  {#each service.tags as tag}
+                    <span class="tag">{tag}</span>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+            <div class="info-row">
+              <span class="info-label">{t('common.createdAt')}</span>
+              <span class="info-value info-date">{formatDate(service.created_at)}</span>
+            </div>
+            <div class="info-row">
+              <span class="info-label">{t('common.updatedAt')}</span>
+              <span class="info-value info-date">{formatDate(service.updated_at)}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 의존성 목록 패널 -->
+        <div class="deps-panel">
+          <div class="panel-header">
+            <h2 class="panel-title">{t('services.dependencies')}</h2>
+            <span class="panel-count">{dependencies.length}</span>
+          </div>
+
+          {#if depsLoading}
+            <div class="panel-loading">
+              <div class="spinner spinner-sm"></div>
+            </div>
+          {:else if dependencies.length === 0}
+            <div class="panel-empty">
+              <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+                <circle cx="16" cy="16" r="6" />
+                <circle cx="6" cy="8" r="3" />
+                <circle cx="26" cy="8" r="3" />
+                <path d="M9 9l4 4M23 9l-4 4" />
+              </svg>
+              <span>의존 서비스가 없습니다</span>
+            </div>
+          {:else}
+            <div class="deps-list">
+              {#each dependencies as dep}
+                <div class="dep-item" @click="navigateToService(dep.id)">
+                  <span class="status-dot" class:dot-healthy={dep.status === 'healthy'} class:dot-degraded={dep.status === 'degraded'} class:dot-down={dep.status === 'down'}></span>
+                  <div class="dep-info">
+                    <span class="dep-name">{dep.name}</span>
+                    <span class="dep-url">{dep.url}</span>
+                  </div>
+                  <span class={`status-badge badge-${dep.status}`}>{getStatusLabel(dep.status)}</span>
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" class="dep-arrow">
+                    <path fill-rule="evenodd" d="M4.646 1.646a.5.5 0 01.708 0l6 6a.5.5 0 010 .708l-6 6a.5.5 0 01-.708-.708L10.293 8 4.646 2.354a.5.5 0 010-.708z" />
+                  </svg>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+      <!-- 최근 헬스체크 이력 -->
+      <div class="history-panel">
+        <div class="panel-header">
+          <h2 class="panel-title">헬스체크 이력 (최근 20건)</h2>
+          <button class="btn btn-sm btn-secondary" @click="loadHealthHistory" disabled={historyLoading}>
+            <svg class:spinning={historyLoading} width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M11.534 7h3.932a.25.25 0 01.192.41l-1.966 2.36a.25.25 0 01-.384 0l-1.966-2.36a.25.25 0 01.192-.41zm-11 2h3.932a.25.25 0 00.192-.41L2.692 6.23a.25.25 0 00-.384 0L.342 8.59A.25.25 0 00.534 9z" />
+              <path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 11-.771-.636A6.002 6.002 0 0113.917 7H12.9A5.002 5.002 0 008 3zM3.1 9a5.002 5.002 0 008.757 2.182.5.5 0 11.771.636A6.002 6.002 0 012.083 9H3.1z" />
+            </svg>
+            {t('common.refresh')}
+          </button>
+        </div>
+
+        {#if historyLoading}
+          <div class="panel-loading">
+            <div class="spinner spinner-sm"></div>
+          </div>
+        {:else if healthHistory.length === 0}
+          <div class="panel-empty">
+            <span>헬스체크 이력이 없습니다</span>
+          </div>
+        {:else}
+          <div class="history-table-wrap">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>시각</th>
+                  <th>상태</th>
+                  <th>응답 코드</th>
+                  <th>응답 시간</th>
+                  <th>메시지</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each healthHistory as item}
+                  <tr class="history-row" class:row-error={item.status === 'down'}>
+                    <td class="hc-time">{formatDateTime(item.checked_at)}</td>
+                    <td>
+                      <span class={`status-badge badge-${item.status}`}>{getStatusLabel(item.status)}</span>
+                    </td>
+                    <td>
+                      <span class="status-code" class:code-ok={item.status_code >= 200 && item.status_code < 300} class:code-err={item.status_code >= 400}>
+                        {item.status_code || '—'}
+                      </span>
+                    </td>
+                    <td>
+                      <span class="response-time">{item.response_ms || 0}ms</span>
+                    </td>
+                    <td>
+                      <span class="hc-message">{item.message || '—'}</span>
+                    </td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- ===== 편집 모달 ===== -->
+    {#if showModal}
+      <div class="modal-backdrop" @click="closeModal">
+        <div class="modal" @click|stopPropagation="">
+          <div class="modal-header">
+            <h2 class="modal-title">{t('services.editService')}</h2>
+            <button class="modal-close" @click="closeModal">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
+                <path d="M2.146 2.854a.5.5 0 11.708-.708L9 8.293l6.146-6.147a.5.5 0 01.708.708L9.707 9l6.147 6.146a.5.5 0 01-.708.708L9 9.707l-6.146 6.147a.5.5 0 01-.708-.708L8.293 9 2.146 2.854z" />
+              </svg>
+            </button>
+          </div>
+
+          <form class="modal-form" @submit|preventDefault="handleSubmit">
+            <!-- 서비스명 -->
+            <div class="form-group" class:has-error={formErrors.name}>
+              <label class="form-label" for="edit-name">
+                {t('services.serviceName')} <span class="required">*</span>
+              </label>
+              <input
+                id="edit-name"
+                type="text"
+                class="form-input"
+                bind:value={form.name}
+                placeholder="예: api-gateway"
+                disabled={submitting}
+                @blur="validateName"
+              />
+              {#if formErrors.name}
+                <span class="field-error">{formErrors.name}</span>
+              {/if}
+            </div>
+
+            <!-- URL -->
+            <div class="form-group" class:has-error={formErrors.url}>
+              <label class="form-label" for="edit-url">
+                {t('services.endpoint')} <span class="required">*</span>
+              </label>
+              <input
+                id="edit-url"
+                type="text"
+                class="form-input"
+                bind:value={form.url}
+                placeholder="https://api.example.com"
+                disabled={submitting}
+                @blur="validateUrl"
+              />
+              {#if formErrors.url}
+                <span class="field-error">{formErrors.url}</span>
+              {/if}
+            </div>
+
+            <!-- 설명 -->
+            <div class="form-group">
+              <label class="form-label" for="edit-desc">{t('common.description')}</label>
+              <textarea
+                id="edit-desc"
+                class="form-input form-textarea"
+                bind:value={form.description}
+                placeholder="서비스 설명을 입력하세요"
+                rows="3"
+                disabled={submitting}
+              ></textarea>
+            </div>
+
+            <!-- 서비스 유형 + 헬스체크 주기 -->
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="edit-type">{t('services.serviceType')}</label>
+                <select id="edit-type" class="form-input form-select" bind:value={form.service_type} disabled={submitting}>
+                  <option value="">선택...</option>
+                  <option value="http">HTTP</option>
+                  <option value="grpc">gRPC</option>
+                  <option value="database">Database</option>
+                  <option value="queue">Queue</option>
+                  <option value="cache">Cache</option>
+                </select>
+              </div>
+
+              <div class="form-group" class:has-error={formErrors.health_check_interval}>
+                <label class="form-label" for="edit-interval">
+                  헬스체크 주기 (초) <span class="required">*</span>
+                </label>
+                <input
+                  id="edit-interval"
+                  type="number"
+                  class="form-input"
+                  bind:value={form.health_check_interval}
+                  min="5"
+                  max="3600"
+                  placeholder="30"
+                  disabled={submitting}
+                  @blur="validateInterval"
+                />
+                {#if formErrors.health_check_interval}
+                  <span class="field-error">{formErrors.health_check_interval}</span>
+                {/if}
+              </div>
+            </div>
+
+            <!-- 헬스체크 URL -->
+            <div class="form-group" class:has-error={formErrors.health_check_url}>
+              <label class="form-label" for="edit-hcurl">{t('services.healthCheckUrl')}</label>
+              <input
+                id="edit-hcurl"
+                type="text"
+                class="form-input"
+                bind:value={form.health_check_url}
+                placeholder="/health 또는 https://api.example.com/health"
+                disabled={submitting}
+                @blur="validateHealthCheckUrl"
+              />
+              {#if formErrors.health_check_url}
+                <span class="field-error">{formErrors.health_check_url}</span>
+              {/if}
+            </div>
+
+            <!-- 태그 -->
+            <div class="form-group">
+              <label class="form-label" for="edit-tags">태그</label>
+              <input
+                id="edit-tags"
+                type="text"
+                class="form-input"
+                bind:value={form.tags}
+                placeholder="production, backend, api"
+                disabled={submitting}
+              />
+              <span class="form-hint">쉼표로 구분하여 여러 태그를 입력하세요</span>
+            </div>
+
+            <!-- 모달 에러 -->
+            {#if modalError}
+              <div class="alert alert-error">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M8 15A7 7 0 118 1a7 7 0 010 14zm0 1A8 8 0 108 0a8 8 0 000 16z" />
+                  <path d="M7.002 11a1 1 0 112 0 1 1 0 01-2 0zM7.1 4.995a.905.905 0 111.8 0l-.35 3.507a.552.552 0 01-1.1 0L7.1 4.995z" />
+                </svg>
+                <span>{modalError}</span>
+              </div>
+            {/if}
+
+            <div class="modal-actions">
+              <button type="button" class="btn btn-ghost" @click="closeModal" disabled={submitting}>
+                {t('common.cancel')}
+              </button>
+              <button type="submit" class="btn btn-primary" disabled={submitting}>
+                {#if submitting}
+                  <span class="btn-spinner"></span>
+                  <span>{t('common.loading')}</span>
+                {:else}
+                  <span>{t('common.save')}</span>
+                {/if}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {/if}
+
+    <!-- ===== 삭제 확인 모달 ===== -->
+    {#if showDeleteConfirm}
+      <div class="modal-backdrop" @click="cancelDelete">
+        <div class="modal modal-sm" @click|stopPropagation="">
+          <div class="modal-header">
+            <h2 class="modal-title">{t('services.deleteService')}</h2>
+            <button class="modal-close" @click="cancelDelete">
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor">
+                <path d="M2.146 2.854a.5.5 0 11.708-.708L9 8.293l6.146-6.147a.5.5 0 01.708.708L9.707 9l6.147 6.146a.5.5 0 01-.708.708L9 9.707l-6.146 6.147a.5.5 0 01-.708-.708L8.293 9 2.146 2.854z" />
+              </svg>
+            </button>
+          </div>
+          <div class="modal-body">
+            <div class="delete-icon">
+              <svg width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="var(--color-danger)" stroke-width="1.5">
+                <circle cx="20" cy="20" r="17" />
+                <path d="M20 13v8M20 27v1" stroke-linecap="round" />
+              </svg>
+            </div>
+            <p class="delete-confirm-text">{t('services.deleteConfirm')}</p>
+            {#if service}
+              <p class="delete-target-name">{service.name}</p>
+            {/if}
+            <p class="delete-warning">이 작업은 되돌릴 수 없습니다.</p>
+          </div>
+          <div class="modal-actions">
+            <button class="btn btn-ghost" @click="cancelDelete" disabled={deleting}>
+              {t('common.cancel')}
+            </button>
+            <button class="btn btn-danger" @click="executeDelete" disabled={deleting}>
+              {#if deleting}
+                <span class="btn-spinner btn-spinner-light"></span>
+                <span>{t('common.loading')}</span>
+              {:else}
+                <span>{t('common.delete')}</span>
+              {/if}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+  </div>
+</template>
+
+<script>
+import { t } from '../../../i18n.vais'
+import { create_auth_store } from '../../../stores/auth.vais'
+
+let authStore = create_auth_store()
+
+# ── 현재 서비스 ID 추출 ───────────────────────────────────────────────────────
+let serviceId = ''
+let pathParts = window.location.pathname.split('/')
+# /services/:id  →  pathParts = ['', 'services', ':id']
+if pathParts.length >= 3 {
+  serviceId = pathParts[2]
+}
+
+# ── 상태 ──────────────────────────────────────────────────────────────────────
+let service = null
+let loading = false
+let errorMessage = ''
+
+# 의존성
+let dependencies = []
+let depsLoading = false
+
+# 헬스체크 이력
+let healthHistory = []
+let historyLoading = false
+
+# 메트릭 요약
+let metrics = {
+  avg_response_ms: '—',
+  uptime_percent: 0,
+  error_rate_percent: '—',
+  error_count: 0,
+  request_count: 0,
+  response_trend: 'stable',
+}
+
+# 편집 모달 상태
+let showModal = false
+let submitting = false
+let modalError = ''
+
+# 삭제 확인 모달
+let showDeleteConfirm = false
+let deleting = false
+
+# 폼 데이터
+let form = {
+  name: '',
+  url: '',
+  description: '',
+  service_type: '',
+  health_check_url: '',
+  health_check_interval: 30,
+  tags: '',
+}
+
+# 폼 에러
+let formErrors = {
+  name: '',
+  url: '',
+  health_check_url: '',
+  health_check_interval: '',
+}
+
+# ── API 헬퍼 ──────────────────────────────────────────────────────────────────
+
+A F apiFetch(method: str, path: str, body: str) -> any {
+  let token = authStore.token
+  let opts = {
+    method: method,
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token,
+    },
+  }
+  if str_len(body) > 0 {
+    opts.body = body
+  }
+  let res = Y window.fetch('/api/v1' + path, opts)
+  let status = res.status.toString()
+  let data = Y res.json()
+  { status: status, data: data }
+}
+
+# ── 데이터 로드 ───────────────────────────────────────────────────────────────
+
+A F loadService() {
+  if str_len(serviceId) === 0 {
+    errorMessage = '서비스 ID가 없습니다'
+    R
+  }
+
+  loading = true
+  errorMessage = ''
+
+  let result = Y apiFetch('GET', '/services/' + serviceId, '')
+
+  if result.status === '200' {
+    service = result.data.service || result.data
+    loadDependencies()
+    loadHealthHistory()
+    loadMetrics()
+  } else if result.status === '404' {
+    errorMessage = '서비스를 찾을 수 없습니다'
+    service = null
+  } else {
+    errorMessage = (result.data && result.data.error) || t('common.error')
+    service = null
+  }
+
+  loading = false
+}
+
+A F loadDependencies() {
+  depsLoading = true
+
+  let result = Y apiFetch('GET', '/services/' + serviceId + '/dependencies', '')
+
+  if result.status === '200' {
+    dependencies = result.data.dependencies || result.data || []
+  } else {
+    dependencies = []
+  }
+
+  depsLoading = false
+}
+
+A F loadHealthHistory() {
+  historyLoading = true
+
+  let result = Y apiFetch('GET', '/services/' + serviceId + '/health-history?limit=20', '')
+
+  if result.status === '200' {
+    healthHistory = result.data.history || result.data || []
+  } else {
+    healthHistory = []
+  }
+
+  historyLoading = false
+}
+
+A F loadMetrics() {
+  let result = Y apiFetch('GET', '/services/' + serviceId + '/metrics/summary', '')
+
+  if result.status === '200' {
+    let m = result.data.summary || result.data || {}
+    metrics = {
+      avg_response_ms: m.avg_response_ms || '—',
+      uptime_percent: m.uptime_percent || 0,
+      error_rate_percent: m.error_rate_percent || '0',
+      error_count: m.error_count || 0,
+      request_count: m.request_count || 0,
+      response_trend: m.response_trend || 'stable',
+    }
+  }
+}
+
+# ── 유틸 ─────────────────────────────────────────────────────────────────────
+
+F getStatusLabel(status: str) -> str {
+  M status {
+    'healthy'  => t('services.status.healthy'),
+    'degraded' => t('services.status.degraded'),
+    'down'     => t('services.status.down'),
+    _          => t('services.status.unknown'),
+  }
+}
+
+F formatDate(iso: str) -> str {
+  if !iso || str_len(iso) === 0 { R '—' }
+  let d = new Date(iso)
+  d.toLocaleString()
+}
+
+F formatDateTime(iso: str) -> str {
+  if !iso || str_len(iso) === 0 { R '—' }
+  let d = new Date(iso)
+  d.toLocaleString()
+}
+
+F formatRelativeTime(iso: str) -> str {
+  if !iso || str_len(iso) === 0 { R '없음' }
+  let d = new Date(iso)
+  let now = new Date()
+  let diffMs = now - d
+  let diffSec = Math.floor(diffMs / 1000)
+  if diffSec < 60 { R diffSec + '초 전' }
+  let diffMin = Math.floor(diffSec / 60)
+  if diffMin < 60 { R diffMin + '분 전' }
+  let diffHour = Math.floor(diffMin / 60)
+  if diffHour < 24 { R diffHour + '시간 전' }
+  let diffDay = Math.floor(diffHour / 24)
+  diffDay + '일 전'
+}
+
+F goBack() {
+  window.router.navigate('/services')
+}
+
+F navigateToService(id: str) {
+  window.router.navigate('/services/' + id)
+}
+
+F dismissError() {
+  errorMessage = ''
+}
+
+# ── 편집 모달 ────────────────────────────────────────────────────────────────
+
+F resetForm() {
+  form = {
+    name: '',
+    url: '',
+    description: '',
+    service_type: '',
+    health_check_url: '',
+    health_check_interval: 30,
+    tags: '',
+  }
+  formErrors = { name: '', url: '', health_check_url: '', health_check_interval: '' }
+  modalError = ''
+}
+
+F openEditModal() {
+  if !service { R }
+  resetForm()
+  form.name = service.name
+  form.url = service.url
+  form.description = service.description || ''
+  form.service_type = service.service_type || ''
+  form.health_check_url = service.health_check_url || ''
+  form.health_check_interval = service.health_check_interval || 30
+  form.tags = (service.tags || []).join(', ')
+  showModal = true
+}
+
+F closeModal() {
+  if submitting { R }
+  showModal = false
+  resetForm()
+}
+
+# ── 밸리데이션 ────────────────────────────────────────────────────────────────
+
+F validateName() {
+  formErrors.name = ''
+  if str_len(form.name.trim()) === 0 {
+    formErrors.name = '서비스명을 입력해주세요'
+  } else if str_len(form.name.trim()) < 2 {
+    formErrors.name = '서비스명은 2자 이상이어야 합니다'
+  } else if str_len(form.name.trim()) > 100 {
+    formErrors.name = '서비스명은 100자 이하여야 합니다'
+  }
+}
+
+F validateUrl() {
+  formErrors.url = ''
+  let v = form.url.trim()
+  if str_len(v) === 0 {
+    formErrors.url = 'URL을 입력해주세요'
+    R
+  }
+  let isHttp = v.startsWith('http://') || v.startsWith('https://')
+  if !isHttp {
+    formErrors.url = '유효한 URL을 입력해주세요 (http:// 또는 https://)'
+  }
+}
+
+F validateInterval() {
+  formErrors.health_check_interval = ''
+  let v = parseInt(form.health_check_interval, 10)
+  if isNaN(v) || v < 5 {
+    formErrors.health_check_interval = '최소 5초 이상이어야 합니다'
+  } else if v > 3600 {
+    formErrors.health_check_interval = '최대 3600초 이하여야 합니다'
+  }
+}
+
+F validateHealthCheckUrl() {
+  formErrors.health_check_url = ''
+  let v = form.health_check_url.trim()
+  if str_len(v) === 0 { R }
+  let isPath = v.startsWith('/')
+  let isUrl = v.startsWith('http://') || v.startsWith('https://')
+  if !isPath && !isUrl {
+    formErrors.health_check_url = '경로(/health) 또는 전체 URL 형식으로 입력해주세요'
+  }
+}
+
+F validateForm() -> bool {
+  validateName()
+  validateUrl()
+  validateInterval()
+  validateHealthCheckUrl()
+  str_len(formErrors.name) === 0
+    && str_len(formErrors.url) === 0
+    && str_len(formErrors.health_check_interval) === 0
+    && str_len(formErrors.health_check_url) === 0
+}
+
+# ── 편집 제출 ────────────────────────────────────────────────────────────────
+
+A F handleSubmit() {
+  modalError = ''
+  if !validateForm() { R }
+
+  submitting = true
+
+  let tagList = form.tags.split(',').map(function(t) { return t.trim() }).filter(function(t) { return str_len(t) > 0 })
+  let payload = JSON.stringify({
+    name: form.name.trim(),
+    url: form.url.trim(),
+    description: form.description.trim(),
+    service_type: form.service_type,
+    health_check_url: form.health_check_url.trim(),
+    health_check_interval: parseInt(form.health_check_interval, 10),
+    tags: tagList,
+  })
+
+  let result = Y apiFetch('PUT', '/services/' + serviceId, payload)
+
+  if result.status === '200' {
+    service = result.data.service || result.data
+    showModal = false
+    resetForm()
+  } else {
+    modalError = (result.data && result.data.error) || t('common.error')
+  }
+
+  submitting = false
+}
+
+# ── 삭제 ─────────────────────────────────────────────────────────────────────
+
+F openDeleteConfirm() {
+  showDeleteConfirm = true
+}
+
+F cancelDelete() {
+  if deleting { R }
+  showDeleteConfirm = false
+}
+
+A F executeDelete() {
+  deleting = true
+
+  let result = Y apiFetch('DELETE', '/services/' + serviceId, '')
+
+  if result.status === '200' || result.status === '204' {
+    showDeleteConfirm = false
+    window.router.navigate('/services')
+  } else {
+    errorMessage = (result.data && result.data.error) || t('common.error')
+    showDeleteConfirm = false
+  }
+
+  deleting = false
+}
+
+# ── 초기화 ────────────────────────────────────────────────────────────────────
+loadService()
+</script>
+
+<style scoped>
+.service-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-height: 100%;
+}
+
+/* 로딩 */
+.detail-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 300px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner-sm {
+  width: 20px;
+  height: 20px;
+  border-width: 2px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  animation: spin 0.7s linear infinite;
+}
+
+/* 에러 상태 */
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 64px 24px;
+  text-align: center;
+}
+
+.error-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.error-subtitle {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.error-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 브레드크럼 */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-primary);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 4px 0;
+  transition: opacity 0.15s;
+}
+
+.back-btn:hover {
+  opacity: 0.75;
+  text-decoration: underline;
+}
+
+.breadcrumb-sep {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.breadcrumb-current {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  max-width: 300px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 헤더 카드 */
+.header-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header-card-left {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex: 1;
+  min-width: 0;
+}
+
+.service-icon {
+  width: 48px;
+  height: 48px;
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.header-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.header-top-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.service-name {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+  letter-spacing: -0.3px;
+}
+
+.service-url {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  font-family: 'SF Mono', 'Monaco', monospace;
+}
+
+.service-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.header-card-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* 버튼 공통 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.btn-secondary {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-hover);
+}
+
+.btn-ghost {
+  background: none;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.btn-danger-outline {
+  background: none;
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.btn-danger-outline:hover:not(:disabled) {
+  background: var(--color-danger-muted);
+  border-color: var(--color-danger);
+}
+
+.btn-spinner,
+.btn-spinner-light {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+/* 에러 배너 */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.alert-error {
+  background: var(--color-danger-muted);
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.alert-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-danger);
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.alert-close:hover {
+  opacity: 1;
+}
+
+/* 상태 배지 */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.badge-healthy  { background: rgba(16, 185, 129, 0.12); color: #059669; }
+.badge-degraded { background: rgba(245, 158, 11, 0.12); color: #d97706; }
+.badge-down     { background: rgba(239, 68, 68, 0.12); color: var(--color-danger); }
+.badge-unknown  { background: var(--color-hover); color: var(--color-text-muted); }
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.status-dot.dot-healthy  { background: var(--color-success); box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2); }
+.status-dot.dot-degraded { background: var(--color-warning); box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.2); }
+.status-dot.dot-down     { background: var(--color-danger);  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2); }
+
+.type-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* 메트릭 요약 */
+.metrics-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+}
+
+.metric-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.metric-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.metric-value {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1;
+  letter-spacing: -0.5px;
+}
+
+.metric-unit {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  margin-left: 2px;
+}
+
+.metric-uptime {
+  color: var(--color-success);
+}
+
+.metric-error-rate {
+  color: var(--color-danger);
+}
+
+.metric-trend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.trend-up   { color: var(--color-danger); }
+.trend-down { color: var(--color-success); }
+
+.metric-bar-wrap {
+  margin-top: 2px;
+}
+
+.metric-bar {
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.metric-bar-fill {
+  height: 100%;
+  background: var(--color-success);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.metric-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+/* 콘텐츠 그리드 */
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* 패널 공통 */
+.info-panel,
+.deps-panel,
+.history-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.panel-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 6px;
+}
+
+.panel-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.panel-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+/* 서비스 정보 */
+.info-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  min-width: 120px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.info-value {
+  font-size: 13px;
+  color: var(--color-text-primary);
+  word-break: break-all;
+}
+
+.info-mono {
+  font-family: 'SF Mono', 'Monaco', monospace;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.info-link {
+  color: var(--color-primary);
+  text-decoration: none;
+}
+
+.info-link:hover {
+  text-decoration: underline;
+}
+
+.info-date {
+  color: var(--color-text-secondary);
+}
+
+.info-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: var(--color-hover);
+  color: var(--color-text-secondary);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.text-muted {
+  color: var(--color-text-muted);
+}
+
+/* 의존성 목록 */
+.deps-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.dep-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--color-border);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.dep-item:last-child {
+  border-bottom: none;
+}
+
+.dep-item:hover {
+  background: var(--color-hover);
+}
+
+.dep-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dep-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.dep-url {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  font-family: 'SF Mono', 'Monaco', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dep-arrow {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+/* 헬스체크 이력 */
+.history-table-wrap {
+  overflow-x: auto;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.history-table thead tr {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.history-table th {
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.history-row {
+  border-bottom: 1px solid var(--color-border);
+  transition: background 0.1s;
+}
+
+.history-row:last-child {
+  border-bottom: none;
+}
+
+.history-row:hover {
+  background: var(--color-hover);
+}
+
+.history-row.row-error {
+  background: rgba(239, 68, 68, 0.03);
+}
+
+.history-table td {
+  padding: 10px 14px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+  vertical-align: middle;
+}
+
+.hc-time {
+  white-space: nowrap;
+  color: var(--color-text-muted);
+}
+
+.status-code {
+  font-family: 'SF Mono', 'Monaco', monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.code-ok  { color: var(--color-success); }
+.code-err { color: var(--color-danger); }
+
+.response-time {
+  font-family: 'SF Mono', 'Monaco', monospace;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.hc-message {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 모달 ────────────────────────────────────────────────────────────────────── */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  padding: 24px;
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.modal-sm {
+  max-width: 400px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  padding: 4px;
+  border-radius: 6px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.modal-close:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.modal-form {
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.modal-body {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 24px 20px;
+}
+
+.modal-form .modal-actions {
+  padding: 4px 0 0;
+}
+
+/* 폼 */
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.required {
+  color: var(--color-danger);
+  margin-left: 2px;
+}
+
+.form-input {
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
+}
+
+.form-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.form-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.form-group.has-error .form-input {
+  border-color: var(--color-danger);
+}
+
+.form-group.has-error .form-input:focus {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.1);
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.form-select {
+  cursor: pointer;
+  appearance: auto;
+}
+
+.field-error {
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.form-hint {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* 삭제 확인 */
+.delete-icon {
+  color: var(--color-danger);
+}
+
+.delete-confirm-text {
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+.delete-target-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+}
+
+.delete-warning {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* 반응형 */
+@media (max-width: 900px) {
+  .metrics-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .header-card {
+    flex-direction: column;
+  }
+
+  .header-card-right {
+    justify-content: flex-start;
+  }
+
+  .metrics-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 480px) {
+  .metrics-summary {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

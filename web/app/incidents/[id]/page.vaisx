@@ -1,0 +1,1042 @@
+<template>
+  <div class="incident-detail-page">
+    <!-- 뒤로 가기 -->
+    <div class="page-nav">
+      <button class="back-btn" @click="handleBack">
+        <span class="back-icon">←</span>
+        <span>{t('incidents.title')}</span>
+      </button>
+    </div>
+
+    <!-- 로딩 -->
+    {#if loading}
+      <div class="loading-container">
+        <div class="spinner"></div>
+        <span>{t('common.loading')}</span>
+      </div>
+    {:else if errorMessage && !incident}
+      <!-- 에러 (데이터 없음) -->
+      <div class="error-container">
+        <div class="alert alert-error" role="alert">
+          <span class="alert-icon">⚠</span>
+          <span>{errorMessage}</span>
+          <button class="alert-close" @click="clearError">✕</button>
+        </div>
+        <button class="btn btn-secondary" @click="handleBack">{t('common.back')}</button>
+      </div>
+    {:else if incident}
+      <!-- 인시던트 상세 -->
+      <div class="detail-layout">
+
+        <!-- 상단: 제목 + 상태 액션 -->
+        <div class="detail-header">
+          <div class="detail-header-left">
+            <div class="incident-meta-row">
+              <span class="incident-id">INC-{incident.id}</span>
+              <span class="status-badge"
+                class:status-open={incident.status == 'open'}
+                class:status-ack={incident.status == 'acknowledged'}
+                class:status-resolved={incident.status == 'resolved'}
+              >
+                {t('incidents.status.' + incident.status)}
+              </span>
+              <span class="severity-badge"
+                class:severity-critical={incident.severity == 'critical'}
+                class:severity-high={incident.severity == 'high'}
+                class:severity-medium={incident.severity == 'medium'}
+                class:severity-low={incident.severity == 'low'}
+              >
+                {t('incidents.severity.' + incident.severity)}
+              </span>
+            </div>
+            <h2 class="incident-title">{incident.title}</h2>
+            {#if incident.description}
+              <p class="incident-description">{incident.description}</p>
+            {/if}
+          </div>
+
+          <!-- 상태 변경 버튼 -->
+          <div class="action-buttons">
+            {#if incident.status == 'open'}
+              <button class="btn btn-warning" @click="handleAcknowledge" disabled={actionLoading}>
+                {#if actionLoading && pendingAction == 'acknowledge'}
+                  <span class="btn-spinner-sm"></span>
+                {/if}
+                {t('incidents.acknowledge')}
+              </button>
+              <button class="btn btn-success" @click="handleResolve" disabled={actionLoading}>
+                {#if actionLoading && pendingAction == 'resolve'}
+                  <span class="btn-spinner-sm"></span>
+                {/if}
+                {t('incidents.resolve')}
+              </button>
+            {:else if incident.status == 'acknowledged'}
+              <button class="btn btn-success" @click="handleResolve" disabled={actionLoading}>
+                {#if actionLoading && pendingAction == 'resolve'}
+                  <span class="btn-spinner-sm"></span>
+                {/if}
+                {t('incidents.resolve')}
+              </button>
+              <button class="btn btn-secondary" @click="handleReopen" disabled={actionLoading}>
+                {#if actionLoading && pendingAction == 'reopen'}
+                  <span class="btn-spinner-sm"></span>
+                {/if}
+                {t('incidents.reopen')}
+              </button>
+            {:else if incident.status == 'resolved'}
+              <button class="btn btn-secondary" @click="handleReopen" disabled={actionLoading}>
+                {#if actionLoading && pendingAction == 'reopen'}
+                  <span class="btn-spinner-sm"></span>
+                {/if}
+                {t('incidents.reopen')}
+              </button>
+            {/if}
+          </div>
+        </div>
+
+        <!-- 에러 알림 (데이터 로드 후 액션 에러) -->
+        {#if errorMessage}
+          <div class="alert alert-error" role="alert">
+            <span class="alert-icon">⚠</span>
+            <span>{errorMessage}</span>
+            <button class="alert-close" @click="clearError">✕</button>
+          </div>
+        {/if}
+
+        <!-- 메인 콘텐츠 그리드 -->
+        <div class="content-grid">
+
+          <!-- 좌측: 타임라인 + 코멘트 -->
+          <div class="main-col">
+
+            <!-- 타임라인 -->
+            <div class="section-card">
+              <h3 class="section-title">
+                <span class="section-icon">⏱</span>
+                {t('incidents.timeline')}
+              </h3>
+              {#if timeline.length == 0}
+                <p class="empty-section">{t('common.noData')}</p>
+              {:else}
+                <div class="timeline">
+                  {#each timeline as event}
+                    <div class="timeline-item">
+                      <div class="timeline-dot"
+                        class:dot-open={event.event_type == 'created'}
+                        class:dot-ack={event.event_type == 'acknowledged'}
+                        class:dot-resolved={event.event_type == 'resolved'}
+                        class:dot-comment={event.event_type == 'comment'}
+                        class:dot-reopened={event.event_type == 'reopened'}
+                      ></div>
+                      <div class="timeline-body">
+                        <div class="timeline-header">
+                          <span class="timeline-actor">{event.actor}</span>
+                          <span class="timeline-event-type timeline-event-badge"
+                            class:badge-created={event.event_type == 'created'}
+                            class:badge-ack={event.event_type == 'acknowledged'}
+                            class:badge-resolved={event.event_type == 'resolved'}
+                            class:badge-comment={event.event_type == 'comment'}
+                            class:badge-reopened={event.event_type == 'reopened'}
+                          >
+                            {formatEventType(event.event_type)}
+                          </span>
+                          <span class="timeline-time">{formatTime(event.created_at)}</span>
+                        </div>
+                        {#if event.message}
+                          <p class="timeline-message">{event.message}</p>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+
+            <!-- 코멘트 추가 -->
+            <div class="section-card">
+              <h3 class="section-title">
+                <span class="section-icon">💬</span>
+                {t('incidents.addComment')}
+              </h3>
+              <div class="comment-form">
+                <textarea
+                  class="comment-input"
+                  bind:value={commentText}
+                  placeholder={t('incidents.commentPlaceholder')}
+                  rows="3"
+                  disabled={commentLoading}
+                ></textarea>
+                <div class="comment-actions">
+                  <button
+                    class="btn btn-primary"
+                    @click="handleAddComment"
+                    disabled={commentLoading || str_len(commentText) == 0}
+                  >
+                    {#if commentLoading}
+                      <span class="btn-spinner-sm"></span>
+                      <span>{t('common.loading')}</span>
+                    {:else}
+                      <span>{t('common.submit')}</span>
+                    {/if}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 우측: 인시던트 정보 패널 -->
+          <div class="side-col">
+            <!-- 기본 정보 -->
+            <div class="section-card info-card">
+              <h3 class="section-title">
+                <span class="section-icon">ℹ</span>
+                {t('incidents.details')}
+              </h3>
+              <dl class="info-list">
+                <div class="info-item">
+                  <dt class="info-label">{t('incidents.service')}</dt>
+                  <dd class="info-value">
+                    <span class="service-tag">{incident.service_name}</span>
+                  </dd>
+                </div>
+                <div class="info-item">
+                  <dt class="info-label">{t('incidents.assignee')}</dt>
+                  <dd class="info-value">
+                    {#if incident.assignee}
+                      <span class="assignee-name">{incident.assignee}</span>
+                    {:else}
+                      <span class="unassigned">{t('incidents.unassigned')}</span>
+                    {/if}
+                  </dd>
+                </div>
+                <div class="info-item">
+                  <dt class="info-label">{t('common.createdAt')}</dt>
+                  <dd class="info-value info-time">{formatAbsoluteTime(incident.created_at)}</dd>
+                </div>
+                {#if incident.acknowledged_at}
+                  <div class="info-item">
+                    <dt class="info-label">{t('incidents.acknowledgedAt')}</dt>
+                    <dd class="info-value info-time">{formatAbsoluteTime(incident.acknowledged_at)}</dd>
+                  </div>
+                {/if}
+                {#if incident.resolved_at}
+                  <div class="info-item">
+                    <dt class="info-label">{t('incidents.resolvedAt')}</dt>
+                    <dd class="info-value info-time">{formatAbsoluteTime(incident.resolved_at)}</dd>
+                  </div>
+                {/if}
+              </dl>
+            </div>
+
+            <!-- 관련 알림 -->
+            <div class="section-card">
+              <h3 class="section-title">
+                <span class="section-icon">⚠</span>
+                {t('incidents.relatedAlerts')}
+              </h3>
+              {#if relatedAlerts.length == 0}
+                <p class="empty-section">{t('common.noData')}</p>
+              {:else}
+                <div class="related-alerts">
+                  {#each relatedAlerts as alert}
+                    <div class="related-alert-item">
+                      <span class="alert-rule-name">{alert.rule_name}</span>
+                      <span class="alert-fired-at">{formatTime(alert.fired_at)}</span>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
+  </div>
+</template>
+
+<script>
+import { t } from '../../../i18n.vais'
+import { authStore } from '../../../stores/auth.vais'
+
+# 상태
+let incident = null
+let timeline = []
+let relatedAlerts = []
+let loading = false
+let errorMessage = ''
+let actionLoading = false
+let pendingAction = ''
+let commentText = ''
+let commentLoading = false
+
+# 현재 인시던트 ID (URL 파라미터에서 추출)
+F getIncidentId() -> str {
+  let path = window.location.pathname
+  let parts = path.split('/')
+  parts[parts.length - 1]
+}
+
+F clearError() {
+  errorMessage = ''
+}
+
+# 상대 시간
+F formatTime(iso: str) -> str {
+  if str_len(iso) == 0 {
+    R ""
+  }
+  let d = new Date(iso)
+  let now = new Date()
+  let diff_ms = now - d
+  let diff_sec = Math.floor(diff_ms / 1000)
+  let diff_min = Math.floor(diff_sec / 60)
+  let diff_hour = Math.floor(diff_min / 60)
+  let diff_day = Math.floor(diff_hour / 24)
+
+  if diff_sec < 60 {
+    diff_sec + "s ago"
+  } else if diff_min < 60 {
+    diff_min + "m ago"
+  } else if diff_hour < 24 {
+    diff_hour + "h ago"
+  } else {
+    diff_day + "d ago"
+  }
+}
+
+# 절대 시간 포맷
+F formatAbsoluteTime(iso: str) -> str {
+  if str_len(iso) == 0 {
+    R "—"
+  }
+  let d = new Date(iso)
+  d.toLocaleString()
+}
+
+# 이벤트 타입 포맷
+F formatEventType(event_type: str) -> str {
+  M event_type {
+    "created"      => "Created",
+    "acknowledged" => "Acknowledged",
+    "resolved"     => "Resolved",
+    "reopened"     => "Reopened",
+    "comment"      => "Comment",
+    _              => event_type
+  }
+}
+
+# 인시던트 상세 로드
+A F loadIncident() {
+  loading = true
+  errorMessage = ''
+
+  let id = getIncidentId()
+  let token = authStore.token
+
+  let response = Y fetch_get_with_token("/api/v1/incidents/" + id, token)
+  let status = json_get(response, "status")
+
+  if status != "200" {
+    errorMessage = t('common.error')
+    loading = false
+    R
+  }
+
+  let resp_body = json_get(response, "body")
+  incident = json_get(resp_body, "incident")
+
+  # 타임라인 로드
+  let tl_response = Y fetch_get_with_token("/api/v1/incidents/" + id + "/timeline", token)
+  let tl_status = json_get(tl_response, "status")
+  if tl_status == "200" {
+    let tl_body = json_get(tl_response, "body")
+    let tl_data = json_get(tl_body, "data")
+    timeline = json_parse_array(tl_data)
+  }
+
+  # 관련 알림 로드
+  let al_response = Y fetch_get_with_token("/api/v1/incidents/" + id + "/alerts", token)
+  let al_status = json_get(al_response, "status")
+  if al_status == "200" {
+    let al_body = json_get(al_response, "body")
+    let al_data = json_get(al_body, "data")
+    relatedAlerts = json_parse_array(al_data)
+  }
+
+  loading = false
+}
+
+# 상태 변경 공통 함수
+A F updateStatus(new_status: str) {
+  actionLoading = true
+  pendingAction = new_status
+  errorMessage = ''
+
+  let id = getIncidentId()
+  let token = authStore.token
+  let body = "{\"status\":\"" + new_status + "\"}"
+
+  let response = Y fetch_patch_with_token("/api/v1/incidents/" + id + "/status", body, token)
+  let status = json_get(response, "status")
+
+  if status != "200" {
+    errorMessage = t('common.error')
+    actionLoading = false
+    pendingAction = ''
+    R
+  }
+
+  # 상태 업데이트
+  incident.status = new_status
+  if new_status == "acknowledged" {
+    incident.acknowledged_at = new Date().toISOString()
+  } else if new_status == "resolved" {
+    incident.resolved_at = new Date().toISOString()
+  }
+
+  # 타임라인에 이벤트 추가
+  let new_event = {
+    event_type: M new_status {
+      "acknowledged" => "acknowledged",
+      "resolved"     => "resolved",
+      "open"         => "reopened",
+      _              => new_status
+    },
+    actor: "You",
+    message: "",
+    created_at: new Date().toISOString()
+  }
+  timeline = timeline.concat([new_event])
+
+  actionLoading = false
+  pendingAction = ''
+}
+
+# 인지
+A F handleAcknowledge() {
+  Y updateStatus("acknowledged")
+}
+
+# 해결
+A F handleResolve() {
+  Y updateStatus("resolved")
+}
+
+# 재오픈
+A F handleReopen() {
+  Y updateStatus("open")
+}
+
+# 코멘트 추가
+A F handleAddComment() {
+  if str_len(commentText) == 0 {
+    R
+  }
+
+  commentLoading = true
+  errorMessage = ''
+
+  let id = getIncidentId()
+  let token = authStore.token
+  let escaped = commentText.replace(/\"/g, "\\\"")
+  let body = "{\"message\":\"" + escaped + "\"}"
+
+  let response = Y fetch_post_with_token("/api/v1/incidents/" + id + "/comments", body, token)
+  let status = json_get(response, "status")
+
+  if status != "201" && status != "200" {
+    errorMessage = t('common.error')
+    commentLoading = false
+    R
+  }
+
+  # 타임라인에 코멘트 추가
+  let new_event = {
+    event_type: "comment",
+    actor: "You",
+    message: commentText,
+    created_at: new Date().toISOString()
+  }
+  timeline = timeline.concat([new_event])
+  commentText = ''
+  commentLoading = false
+}
+
+# 목록으로 이동
+F handleBack() {
+  window.router.navigate('/incidents')
+}
+
+# 초기 데이터 로드
+loadIncident()
+</script>
+
+<style scoped>
+.incident-detail-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 뒤로 가기 */
+.page-nav {
+  display: flex;
+  align-items: center;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  transition: background 0.15s, color 0.15s;
+}
+
+.back-btn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.back-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* 로딩 / 에러 */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 240px;
+  gap: 12px;
+  color: var(--color-text-secondary);
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.error-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.alert-error {
+  background: var(--color-danger-muted);
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.alert-icon {
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.alert-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: currentColor;
+  font-size: 14px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+.alert-close:hover {
+  opacity: 1;
+}
+
+/* 상세 레이아웃 */
+.detail-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* 상단 헤더 */
+.detail-header {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 22px 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.detail-header-left {
+  min-width: 0;
+  flex: 1;
+}
+
+.incident-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.incident-id {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-muted);
+  letter-spacing: 0.05em;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+}
+
+.incident-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 8px;
+  letter-spacing: -0.3px;
+  line-height: 1.35;
+}
+
+.incident-description {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* 상태 배지 */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.status-open     { background: rgba(239, 68, 68, 0.12); color: var(--color-danger); }
+.status-ack      { background: rgba(245, 158, 11, 0.12); color: var(--color-warning); }
+.status-resolved { background: rgba(16, 185, 129, 0.12); color: var(--color-success); }
+
+/* 심각도 배지 */
+.severity-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.severity-critical { background: rgba(239, 68, 68, 0.12); color: var(--color-danger); }
+.severity-high     { background: rgba(249, 115, 22, 0.12); color: #f97316; }
+.severity-medium   { background: rgba(245, 158, 11, 0.12); color: var(--color-warning); }
+.severity-low      { background: rgba(59, 130, 246, 0.12); color: var(--color-info); }
+
+/* 액션 버튼 */
+.action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  white-space: nowrap;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.btn-secondary {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--color-border);
+}
+
+.btn-warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--color-warning);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.2);
+}
+
+.btn-success {
+  background: rgba(16, 185, 129, 0.12);
+  color: var(--color-success);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.btn-success:hover:not(:disabled) {
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.btn-spinner-sm {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(0, 0, 0, 0.2);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+/* 콘텐츠 그리드 */
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 20px;
+  align-items: start;
+}
+
+.main-col,
+.side-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 섹션 카드 */
+.section-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 20px;
+}
+
+.section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-icon {
+  font-size: 14px;
+  opacity: 0.7;
+}
+
+.empty-section {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0;
+  text-align: center;
+  padding: 16px 0;
+}
+
+/* 타임라인 */
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  position: relative;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  background: var(--color-border);
+  border-radius: 1px;
+}
+
+.timeline-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 10px 0;
+  position: relative;
+}
+
+.timeline-dot {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 3px solid var(--color-surface);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  margin-top: 2px;
+}
+
+.dot-open    { background: var(--color-danger); }
+.dot-ack     { background: var(--color-warning); }
+.dot-resolved { background: var(--color-success); }
+.dot-comment  { background: var(--color-info); }
+.dot-reopened { background: var(--color-text-muted); }
+
+.timeline-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.timeline-actor {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.timeline-event-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.badge-created  { background: rgba(239, 68, 68, 0.12); color: var(--color-danger); }
+.badge-ack      { background: rgba(245, 158, 11, 0.12); color: var(--color-warning); }
+.badge-resolved { background: rgba(16, 185, 129, 0.12); color: var(--color-success); }
+.badge-comment  { background: rgba(59, 130, 246, 0.12); color: var(--color-info); }
+.badge-reopened { background: var(--color-hover); color: var(--color-text-secondary); }
+
+.timeline-time {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.timeline-message {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0;
+  line-height: 1.5;
+  padding: 8px 12px;
+  background: var(--color-hover);
+  border-radius: 6px;
+  border-left: 3px solid var(--color-info);
+}
+
+/* 코멘트 폼 */
+.comment-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.comment-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+  font-family: inherit;
+  line-height: 1.5;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.comment-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.comment-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.comment-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* 정보 패널 */
+.info-card {
+  padding: 18px 20px;
+}
+
+.info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.info-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.info-value {
+  font-size: 13px;
+  color: var(--color-text-primary);
+}
+
+.info-time {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.service-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.assignee-name {
+  font-weight: 500;
+}
+
+.unassigned {
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+/* 관련 알림 */
+.related-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.related-alert-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--color-hover);
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  gap: 8px;
+}
+
+.alert-rule-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.alert-fired-at {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+@media (max-width: 900px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .side-col {
+    order: -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .detail-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .action-buttons {
+    width: 100%;
+  }
+
+  .action-buttons .btn {
+    flex: 1;
+    justify-content: center;
+  }
+}
+</style>

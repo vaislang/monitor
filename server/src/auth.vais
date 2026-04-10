@@ -1,0 +1,421 @@
+
+# ============================================================================
+# 헬퍼
+# ============================================================================
+
+# 쿼리 파라미터에서 값 추출
+# query 형식: "key1=val1&key2=val2"
+F get_query_param(query: str, key: str) -> str {
+    pairs := str_split(query, "&")
+    count := str_split_count(pairs)
+    search := str_replace(key, "", "") + "="
+
+    i := 0
+    LW i < count {
+        pair := json_get(pairs, i64_to_str(i))
+        I str_len(pair) > 0 && str_starts_with(pair, search) {
+            R str_slice(pair, str_len(search), str_len(pair))
+        }
+        i = i + 1
+    }
+    ""
+}
+
+# 헤더에서 JWT 토큰 추출
+# headers 형식: "Authorization: Bearer <token>\n..."
+F extract_token_from_headers(headers: str) -> str {
+    bearer_prefix := "Bearer "
+    auth_prefix := "Authorization: "
+    lines := str_split(headers, "\n")
+    count := str_split_count(lines)
+
+    i := 0
+    LW i < count {
+        line := str_trim(json_get(lines, i64_to_str(i)))
+        I str_contains(line, auth_prefix) && str_contains(line, bearer_prefix) {
+            idx := str_len(auth_prefix) + str_len(bearer_prefix)
+            # Authorization 헤더가 줄 시작이 아닐 수 있으므로 정확한 위치 찾기
+            # "Authorization: Bearer <token>" 형태
+            I str_starts_with(line, auth_prefix) {
+                R str_trim(str_slice(line, idx, str_len(line)))
+            }
+        }
+        i = i + 1
+    }
+    ""
+}
+
+# User JSON 직렬화 (password_hash 제외)
+F user_to_json(id: i64, email: str, name: str, role: str, team_id: i64) -> str {
+    safe_email := str_replace(str_replace(email, "\\", "\\\\"), "\"", "\\\"")
+    safe_name := str_replace(str_replace(name, "\\", "\\\\"), "\"", "\\\"")
+    safe_role := str_replace(str_replace(role, "\\", "\\\\"), "\"", "\\\"")
+    "{\"id\":" + i64_to_str(id) +
+    ",\"email\":\"" + safe_email +
+    "\",\"name\":\"" + safe_name +
+    "\",\"role\":\"" + safe_role +
+    "\",\"team_id\":" + i64_to_str(team_id) + "}"
+}
+
+# ============================================================================
+# API 핸들러
+# ============================================================================
+
+# POST /api/v1/auth/register
+# body: {"email": "...", "password": "...", "name": "..."}
+# - 이메일 중복 체크 (SELECT from users WHERE email = ?)
+# - 패스워드 해싱
+# - INSERT INTO users
+# - access_token + refresh_token 발급
+# - 201 응답: {"user": {...}, "access_token": "...", "refresh_token": "..."}
+F handle_register(body: str) -> str {
+    email := json_get(body, "email")
+    password := json_get(body, "password")
+    name := json_get(body, "name")
+
+    I str_len(email) == 0 {
+        R error_response(400, "email is required")
+    }
+    I str_len(password) == 0 {
+        R error_response(400, "password is required")
+    }
+    I str_len(name) == 0 {
+        R error_response(400, "name is required")
+    }
+
+    # 이메일 중복 체크
+    safe_email := str_replace(str_replace(email, "\\", "\\\\"), "'", "''")
+    existing := db_query(
+        "SELECT id FROM users WHERE email = '" + safe_email + "' LIMIT 1"
+    )
+    existing_id := json_get(existing, "id")
+    I str_len(existing_id) > 0 {
+        R error_response(409, "Email already registered")
+    }
+
+    # 패스워드 해싱
+    pw_hash := hash_pw(password)
+    now_ms := current_time_ms()
+    now_sec := now_ms / 1000
+    role := "member"
+
+    # INSERT INTO users
+    db_prepare("register_user",
+        "INSERT INTO users (email, password_hash, name, role, team_id, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)")
+    reg_params := "[]"
+    reg_params := json_set(reg_params, "0", email)
+    reg_params := json_set(reg_params, "1", pw_hash)
+    reg_params := json_set(reg_params, "2", name)
+    reg_params := json_set(reg_params, "3", role)
+    reg_params := json_set(reg_params, "4", i64_to_str(now_sec))
+    reg_params := json_set(reg_params, "5", i64_to_str(now_sec))
+    db_execute_prepared("register_user", reg_params)
+
+    # 생성된 사용자 조회
+    user_row := db_query(
+        "SELECT id, email, name, role, team_id FROM users WHERE email = '" + safe_email + "' LIMIT 1"
+    )
+    user_id := str_to_i64(json_get(user_row, "id"))
+    user_email := json_get(user_row, "email")
+    user_name := json_get(user_row, "name")
+    user_role := json_get(user_row, "role")
+    user_team_id := str_to_i64(json_get(user_row, "team_id"))
+
+    # 토큰 발급
+    cfg := ServerConfig::default()
+    access_token := create_access_token(user_id, user_email, user_role, cfg)
+    refresh_token := create_refresh_token(user_id, cfg)
+
+    user_json := user_to_json(user_id, user_email, user_name, user_role, user_team_id)
+    resp_body := "{\"user\":" + user_json +
+        ",\"access_token\":\"" + access_token +
+        "\",\"refresh_token\":\"" + refresh_token + "\"}"
+
+    json_response(201, resp_body)
+}
+
+# POST /api/v1/auth/login
+# body: {"email": "...", "password": "..."}
+# - SELECT user by email
+# - verify_password
+# - access_token + refresh_token 발급
+# - 200 응답: {"user": {...}, "access_token": "...", "refresh_token": "..."}
+F handle_login(body: str) -> str {
+    email := json_get(body, "email")
+    password := json_get(body, "password")
+
+    I str_len(email) == 0 {
+        R error_response(400, "email is required")
+    }
+    I str_len(password) == 0 {
+        R error_response(400, "password is required")
+    }
+
+    # 사용자 조회
+    safe_email := str_replace(str_replace(email, "\\", "\\\\"), "'", "''")
+    user_row := db_query(
+        "SELECT id, email, password_hash, name, role, team_id FROM users WHERE email = '" + safe_email + "' LIMIT 1"
+    )
+    user_id_str := json_get(user_row, "id")
+    I str_len(user_id_str) == 0 {
+        R error_response(401, "Invalid email or password")
+    }
+
+    # 패스워드 검증
+    pw_hash := json_get(user_row, "password_hash")
+    valid := verify_pw(password, pw_hash)
+    I !valid {
+        R error_response(401, "Invalid email or password")
+    }
+
+    user_id := str_to_i64(user_id_str)
+    user_email := json_get(user_row, "email")
+    user_name := json_get(user_row, "name")
+    user_role := json_get(user_row, "role")
+    user_team_id := str_to_i64(json_get(user_row, "team_id"))
+
+    # 토큰 발급
+    cfg := ServerConfig::default()
+    access_token := create_access_token(user_id, user_email, user_role, cfg)
+    refresh_token := create_refresh_token(user_id, cfg)
+
+    user_json := user_to_json(user_id, user_email, user_name, user_role, user_team_id)
+    resp_body := "{\"user\":" + user_json +
+        ",\"access_token\":\"" + access_token +
+        "\",\"refresh_token\":\"" + refresh_token + "\"}"
+
+    json_response(200, resp_body)
+}
+
+# POST /api/v1/auth/refresh
+# body: {"refresh_token": "..."}
+# - sessions 테이블에서 refresh_token 조회
+# - 만료 체크
+# - 새 access_token 발급
+# - 200 응답: {"access_token": "..."}
+F handle_refresh(body: str) -> str {
+    refresh_token := json_get(body, "refresh_token")
+    I str_len(refresh_token) == 0 {
+        R error_response(400, "refresh_token is required")
+    }
+
+    # sessions 테이블에서 refresh_token 조회
+    safe_refresh_token := str_replace(str_replace(refresh_token, "\\", "\\\\"), "'", "''")
+    session_row := db_query(
+        "SELECT user_id, expires_at FROM sessions WHERE refresh_token = '" + safe_refresh_token + "' LIMIT 1"
+    )
+    user_id_str := json_get(session_row, "user_id")
+    I str_len(user_id_str) == 0 {
+        R error_response(401, "Invalid refresh token")
+    }
+
+    # 만료 체크
+    expires_at := str_to_i64(json_get(session_row, "expires_at"))
+    now_sec := current_time_ms() / 1000
+    I now_sec > expires_at {
+        # 만료된 세션 삭제
+        db_prepare("delete_session_by_token",
+            "DELETE FROM sessions WHERE refresh_token = ?")
+        del_params := "[]"
+        del_params := json_set(del_params, "0", refresh_token)
+        db_execute_prepared("delete_session_by_token", del_params)
+        R error_response(401, "Refresh token expired")
+    }
+
+    user_id := str_to_i64(user_id_str)
+
+    # 사용자 조회
+    user_row := db_query(
+        "SELECT email, role FROM users WHERE id = " + i64_to_str(user_id) + " LIMIT 1"
+    )
+    user_email := json_get(user_row, "email")
+    user_role := json_get(user_row, "role")
+
+    # 새 access_token 발급
+    cfg := ServerConfig::default()
+    access_token := create_access_token(user_id, user_email, user_role, cfg)
+
+    resp_body := "{\"access_token\":\"" + access_token + "\"}"
+    json_response(200, resp_body)
+}
+
+# POST /api/v1/auth/logout
+# body: {"refresh_token": "..."}
+# - sessions 테이블에서 해당 refresh_token 삭제
+# - 200 응답: {"message": "Logged out"}
+F handle_logout(body: str) -> str {
+    refresh_token := json_get(body, "refresh_token")
+    I str_len(refresh_token) == 0 {
+        R error_response(400, "refresh_token is required")
+    }
+
+    # sessions 테이블에서 해당 refresh_token 삭제
+    db_prepare("logout_delete_session",
+        "DELETE FROM sessions WHERE refresh_token = ?")
+    logout_params := "[]"
+    logout_params := json_set(logout_params, "0", refresh_token)
+    db_execute_prepared("logout_delete_session", logout_params)
+
+    resp_body := "{\"message\":\"Logged out\"}"
+    json_response(200, resp_body)
+}
+
+# GET /api/v1/auth/me
+# headers에서 JWT 추출 → user_id → SELECT user
+# - 200 응답: {"user": {...}} (password_hash 제외)
+F handle_me(headers: str) -> str {
+    token := extract_token_from_headers(headers)
+    I str_len(token) == 0 {
+        R error_response(401, "Authorization token required")
+    }
+
+    cfg := ServerConfig::default()
+    claims := verify_token(token, cfg.jwt_secret)
+    I str_len(claims) == 0 {
+        R error_response(401, "Invalid or expired token")
+    }
+
+    user_id_str := json_get(claims, "sub")
+    user_id := str_to_i64(user_id_str)
+
+    # SELECT user (password_hash 제외)
+    user_row := db_query(
+        "SELECT id, email, name, role, team_id FROM users WHERE id = " + i64_to_str(user_id) + " LIMIT 1"
+    )
+    id_str := json_get(user_row, "id")
+    I str_len(id_str) == 0 {
+        R error_response(404, "User not found")
+    }
+
+    user_json := user_to_json(
+        str_to_i64(json_get(user_row, "id")),
+        json_get(user_row, "email"),
+        json_get(user_row, "name"),
+        json_get(user_row, "role"),
+        str_to_i64(json_get(user_row, "team_id"))
+    )
+
+    resp_body := "{\"user\":" + user_json + "}"
+    json_response(200, resp_body)
+}
+
+# GET /api/v1/auth/oauth/github
+# - GitHub authorize URL로 리다이렉트 응답
+# - 302 응답 + Location 헤더
+F handle_oauth_github_start() -> str {
+    cfg := ServerConfig::default()
+    state := generate_uuid()
+    authorize_url := "https://github.com/login/oauth/authorize" +
+        "?client_id=" + cfg.oauth_github_client_id +
+        "&redirect_uri=" + cfg.oauth_github_redirect_uri +
+        "&scope=user:email" +
+        "&state=" + state
+
+    resp_body := "{\"location\":\"" + authorize_url + "\"}"
+    json_response(302, resp_body)
+}
+
+# GET /api/v1/auth/oauth/github/callback?code=...
+# - code로 GitHub access token 교환 (간소화: 시뮬레이션)
+# - GitHub user info 조회 (간소화: code를 user 정보로 사용)
+# - users 테이블에서 oauth_provider='github' AND oauth_id 조회 or 생성
+# - access_token + refresh_token 발급
+# - 200 응답: {"user": {...}, "access_token": "...", "refresh_token": "..."}
+F handle_oauth_github_callback(query_params: str) -> str {
+    code := get_query_param(query_params, "code")
+    I str_len(code) == 0 {
+        R error_response(400, "code is required")
+    }
+
+    # 시뮬레이션: code를 oauth_id로 사용하고 이메일/이름 생성
+    oauth_id := code
+    oauth_email := "github_" + code + "@github.oauth"
+    oauth_name := "GitHub User " + code
+    oauth_provider := "github"
+    role := "member"
+
+    now_ms := current_time_ms()
+    now_sec := now_ms / 1000
+
+    # oauth_provider='github' AND oauth_id 조회
+    safe_oauth_id := str_replace(str_replace(oauth_id, "\\", "\\\\"), "'", "''")
+    existing_row := db_query(
+        "SELECT id, email, name, role, team_id FROM users WHERE oauth_provider = 'github' AND oauth_id = '" +
+        safe_oauth_id + "' LIMIT 1"
+    )
+    existing_id_str := json_get(existing_row, "id")
+
+    user_id := 0
+    user_email := ""
+    user_name := ""
+    user_role := ""
+    user_team_id := 0
+
+    I str_len(existing_id_str) > 0 {
+        # 기존 사용자
+        user_id = str_to_i64(existing_id_str)
+        user_email = json_get(existing_row, "email")
+        user_name = json_get(existing_row, "name")
+        user_role = json_get(existing_row, "role")
+        user_team_id = str_to_i64(json_get(existing_row, "team_id"))
+    } EL {
+        # 신규 사용자 생성
+        db_prepare("oauth_register_user",
+            "INSERT INTO users (email, password_hash, name, role, team_id, oauth_provider, oauth_id, created_at, updated_at) VALUES (?, '', ?, ?, 0, ?, ?, ?, ?)")
+        oauth_params := "[]"
+        oauth_params := json_set(oauth_params, "0", oauth_email)
+        oauth_params := json_set(oauth_params, "1", oauth_name)
+        oauth_params := json_set(oauth_params, "2", role)
+        oauth_params := json_set(oauth_params, "3", oauth_provider)
+        oauth_params := json_set(oauth_params, "4", oauth_id)
+        oauth_params := json_set(oauth_params, "5", i64_to_str(now_sec))
+        oauth_params := json_set(oauth_params, "6", i64_to_str(now_sec))
+        db_execute_prepared("oauth_register_user", oauth_params)
+
+        new_row := db_query(
+            "SELECT id, email, name, role, team_id FROM users WHERE oauth_id = '" + safe_oauth_id + "' AND oauth_provider = 'github' LIMIT 1"
+        )
+        user_id = str_to_i64(json_get(new_row, "id"))
+        user_email = json_get(new_row, "email")
+        user_name = json_get(new_row, "name")
+        user_role = json_get(new_row, "role")
+        user_team_id = str_to_i64(json_get(new_row, "team_id"))
+    }
+
+    # 토큰 발급
+    cfg := ServerConfig::default()
+    access_token := create_access_token(user_id, user_email, user_role, cfg)
+    refresh_token := create_refresh_token(user_id, cfg)
+
+    user_json := user_to_json(user_id, user_email, user_name, user_role, user_team_id)
+    resp_body := "{\"user\":" + user_json +
+        ",\"access_token\":\"" + access_token +
+        "\",\"refresh_token\":\"" + refresh_token + "\"}"
+
+    json_response(200, resp_body)
+}
+
+F handle_auth_post(path: str, body: str) -> str {
+    I str_contains(path, "/auth/register") { R handle_register(body) }
+    I str_contains(path, "/auth/login") { R handle_login(body) }
+    I str_contains(path, "/auth/refresh") { R handle_refresh(body) }
+    I str_contains(path, "/auth/logout") { R handle_logout(body) }
+    error_response(404, "Auth route not found")
+}
+
+F handle_auth_get(path: str, headers: str) -> str {
+    I str_contains(path, "/auth/oauth/github/callback") {
+        parts := str_split(path, "?")
+        query_params := json_get(parts, "1")
+        R handle_oauth_github_callback(query_params)
+    }
+    I str_contains(path, "/auth/oauth/github") { R handle_oauth_github_start() }
+    I str_contains(path, "/auth/me") { R handle_me(headers) }
+    error_response(404, "Auth route not found")
+}
+
+F handle_auth(method: str, path: str, headers: str, body: str) -> str {
+    I method == "POST" { R handle_auth_post(path, body) }
+    I method == "GET" { R handle_auth_get(path, headers) }
+    error_response(404, "Auth route not found")
+}

@@ -1,0 +1,352 @@
+
+# ============================================================================
+# 헬퍼
+# ============================================================================
+
+# ============================================================================
+# GET /api/v1/incidents/:id — 인시던트 상세 조회
+# ============================================================================
+# 타임라인 이벤트 포함
+F handle_get_incident(headers: str, incident_id: i64) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    current_user_id := str_to_i64(json_get(claims, "sub"))
+
+    incident_json := find_incident_ext_by_id(incident_id)
+    I str_len(incident_json) == 0 {
+        R error_response(404, "Incident not found")
+    }
+
+    # RLS: admin이 아니면 같은 팀인지 확인
+    is_admin := require_role(current_role, "admin")
+    I !is_admin {
+        alert_rule_id := str_to_i64(json_get(incident_json, "alert_rule_id"))
+        alert_json := find_alert_by_id(alert_rule_id)
+        alert_team_id := str_to_i64(json_get(alert_json, "team_id"))
+        user_json := find_user_by_id(current_user_id)
+        user_team_id := str_to_i64(json_get(user_json, "team_id"))
+        I alert_team_id != user_team_id {
+            R error_response(403, "Access denied")
+        }
+    }
+
+    timeline := get_timeline(incident_id)
+    resp_body := "{\"incident\":" + incident_json +
+        ",\"timeline\":" + timeline + "}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# PUT /api/v1/incidents/:id — 인시던트 필드 수정 (assign/escalate/acknowledge/resolve/reopen)
+# ============================================================================
+# body: {"action": "assign"|"escalate"|"acknowledge"|"resolve"|"reopen", "assignee_id": N, "comment": "..."}
+F handle_update_incident(headers: str, incident_id: i64, body: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "member") {
+        R error_response(403, "Member role required")
+    }
+
+    current_user_id := str_to_i64(json_get(claims, "sub"))
+
+    incident_json := find_incident_ext_by_id(incident_id)
+    I str_len(incident_json) == 0 {
+        R error_response(404, "Incident not found")
+    }
+
+    # RLS: admin이 아니면 같은 팀인지 확인
+    is_admin := require_role(current_role, "admin")
+    I !is_admin {
+        alert_rule_id := str_to_i64(json_get(incident_json, "alert_rule_id"))
+        alert_json := find_alert_by_id(alert_rule_id)
+        alert_team_id := str_to_i64(json_get(alert_json, "team_id"))
+        user_json := find_user_by_id(current_user_id)
+        user_team_id := str_to_i64(json_get(user_json, "team_id"))
+        I alert_team_id != user_team_id {
+            R error_response(403, "Access denied")
+        }
+    }
+
+    action := json_get(body, "action")
+    I str_len(action) == 0 {
+        R error_response(400, "action is required (assign/escalate/acknowledge/resolve/reopen)")
+    }
+
+    # actor 이름 (user email 사용)
+    actor_user := find_user_by_id(current_user_id)
+    actor := json_get(actor_user, "email")
+    actor := I str_len(actor) == 0 { "system" } EL { actor }
+
+    comment := json_get(body, "comment")
+    current_status := json_get(incident_json, "status")
+
+    I action == "assign" {
+        assignee_id_str := json_get(body, "assignee_id")
+        I str_len(assignee_id_str) == 0 {
+            R error_response(400, "assignee_id is required for assign action")
+        }
+        assignee_id := str_to_i64(assignee_id_str)
+        assign_incident(incident_id, assignee_id)
+        event_desc := I str_len(comment) > 0 {
+            "Assigned to user " + i64_to_str(assignee_id) + ". " + comment
+        } EL {
+            "Assigned to user " + i64_to_str(assignee_id)
+        }
+        add_timeline_event(incident_id, "comment", event_desc, actor)
+    } EL I action == "escalate" {
+        I current_status == "resolved" {
+            R error_response(400, "Cannot escalate a resolved incident")
+        }
+        escalate_incident(incident_id)
+        event_desc := I str_len(comment) > 0 {
+            "Incident escalated. " + comment
+        } EL {
+            "Incident escalated."
+        }
+        add_timeline_event(incident_id, "escalated", event_desc, actor)
+    } EL I action == "acknowledge" {
+        I current_status == "acknowledged" {
+            R error_response(400, "Incident is already acknowledged")
+        }
+        I current_status == "resolved" {
+            R error_response(400, "Cannot acknowledge a resolved incident")
+        }
+        acknowledge_incident_ext(incident_id)
+        event_desc := I str_len(comment) > 0 {
+            "Incident acknowledged. " + comment
+        } EL {
+            "Incident acknowledged."
+        }
+        add_timeline_event(incident_id, "acknowledged", event_desc, actor)
+    } EL I action == "resolve" {
+        I current_status == "resolved" {
+            R error_response(400, "Incident is already resolved")
+        }
+        resolve_incident_ext(incident_id)
+        event_desc := I str_len(comment) > 0 {
+            "Incident resolved. " + comment
+        } EL {
+            "Incident resolved."
+        }
+        add_timeline_event(incident_id, "resolved", event_desc, actor)
+    } EL I action == "reopen" {
+        I current_status != "resolved" {
+            R error_response(400, "Only resolved incidents can be reopened")
+        }
+        reopen_incident(incident_id)
+        event_desc := I str_len(comment) > 0 {
+            "Incident reopened. " + comment
+        } EL {
+            "Incident reopened."
+        }
+        add_timeline_event(incident_id, "reopened", event_desc, actor)
+    } EL {
+        R error_response(400, "Invalid action. Use: assign/escalate/acknowledge/resolve/reopen")
+    }
+
+    updated := find_incident_ext_by_id(incident_id)
+    resp_body := "{\"incident\":" + updated + "}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# GET /api/v1/incidents/:id/timeline — 인시던트 타임라인 조회
+# ============================================================================
+F handle_get_timeline(headers: str, incident_id: i64) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    current_user_id := str_to_i64(json_get(claims, "sub"))
+
+    incident_json := find_incident_ext_by_id(incident_id)
+    I str_len(incident_json) == 0 {
+        R error_response(404, "Incident not found")
+    }
+
+    # RLS: admin이 아니면 같은 팀인지 확인
+    is_admin := require_role(current_role, "admin")
+    I !is_admin {
+        alert_rule_id := str_to_i64(json_get(incident_json, "alert_rule_id"))
+        alert_json := find_alert_by_id(alert_rule_id)
+        alert_team_id := str_to_i64(json_get(alert_json, "team_id"))
+        user_json := find_user_by_id(current_user_id)
+        user_team_id := str_to_i64(json_get(user_json, "team_id"))
+        I alert_team_id != user_team_id {
+            R error_response(403, "Access denied")
+        }
+    }
+
+    timeline := get_timeline(incident_id)
+    resp_body := "{\"incident_id\":" + i64_to_str(incident_id) +
+        ",\"timeline\":" + timeline + "}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# POST /api/v1/incidents/:id/timeline — 타임라인 이벤트 추가 (댓글/노트)
+# ============================================================================
+# body: {"event_type": "comment", "description": "..."}
+# event_type: created/acknowledged/escalated/comment/resolved/reopened
+F handle_add_timeline_event(headers: str, incident_id: i64, body: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "member") {
+        R error_response(403, "Member role required")
+    }
+
+    current_user_id := str_to_i64(json_get(claims, "sub"))
+
+    incident_json := find_incident_ext_by_id(incident_id)
+    I str_len(incident_json) == 0 {
+        R error_response(404, "Incident not found")
+    }
+
+    # RLS: admin이 아니면 같은 팀인지 확인
+    is_admin := require_role(current_role, "admin")
+    I !is_admin {
+        alert_rule_id := str_to_i64(json_get(incident_json, "alert_rule_id"))
+        alert_json := find_alert_by_id(alert_rule_id)
+        alert_team_id := str_to_i64(json_get(alert_json, "team_id"))
+        user_json := find_user_by_id(current_user_id)
+        user_team_id := str_to_i64(json_get(user_json, "team_id"))
+        I alert_team_id != user_team_id {
+            R error_response(403, "Access denied")
+        }
+    }
+
+    event_type := json_get(body, "event_type")
+    event_type := I str_len(event_type) == 0 { "comment" } EL { event_type }
+
+    description := json_get(body, "description")
+    I str_len(description) == 0 {
+        R error_response(400, "description is required")
+    }
+
+    # actor 이름 (user email 사용)
+    actor_user := find_user_by_id(current_user_id)
+    actor := json_get(actor_user, "email")
+    actor := I str_len(actor) == 0 { "system" } EL { actor }
+
+    event_id := add_timeline_event(incident_id, event_type, description, actor)
+
+    event_json := find_timeline_event_by_id(event_id)
+    resp_body := "{\"event\":" + event_json + "}"
+    json_response(201, resp_body)
+}
+
+# ============================================================================
+# GET /api/v1/incidents/stats — 인시던트 통계
+# ============================================================================
+# ?service_id=N&status=open
+# 반환: 서비스별/심각도별/상태별 카운트
+F handle_incident_stats(headers: str, query: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    current_user_id := str_to_i64(json_get(claims, "sub"))
+
+    # 쿼리 파라미터 파싱
+    service_id_str := get_query_param(query, "service_id")
+    status_filter := get_query_param(query, "status")
+
+    service_id := I str_len(service_id_str) > 0 { str_to_i64(service_id_str) } EL { 0 }
+
+    stats_arr := get_incident_stats(service_id, status_filter)
+
+    # 심각도별 집계
+    critical_count := count_incidents_by_severity("critical")
+    warning_count := count_incidents_by_severity("warning")
+    info_count := count_incidents_by_severity("info")
+
+    # 상태별 카운트를 단일 쿼리로 통합 (4개 COUNT → 1개 SUM CASE)
+    status_row := db_query(
+        "SELECT " +
+        "SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count, " +
+        "SUM(CASE WHEN status = 'acknowledged' THEN 1 ELSE 0 END) as ack_count, " +
+        "SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_count, " +
+        "SUM(CASE WHEN status = 'escalated' THEN 1 ELSE 0 END) as escalated_count " +
+        "FROM incidents"
+    )
+    open_count_str := json_get(status_row, "open_count")
+    open_count := I str_len(open_count_str) == 0 { 0 } EL { str_to_i64(open_count_str) }
+    ack_count_str := json_get(status_row, "ack_count")
+    ack_count := I str_len(ack_count_str) == 0 { 0 } EL { str_to_i64(ack_count_str) }
+    resolved_count_str := json_get(status_row, "resolved_count")
+    resolved_count := I str_len(resolved_count_str) == 0 { 0 } EL { str_to_i64(resolved_count_str) }
+    escalated_count_str := json_get(status_row, "escalated_count")
+    escalated_count := I str_len(escalated_count_str) == 0 { 0 } EL { str_to_i64(escalated_count_str) }
+
+    summary := "{\"open\":" + i64_to_str(open_count) +
+        ",\"acknowledged\":" + i64_to_str(ack_count) +
+        ",\"escalated\":" + i64_to_str(escalated_count) +
+        ",\"resolved\":" + i64_to_str(resolved_count) +
+        ",\"by_severity\":{" +
+        "\"critical\":" + i64_to_str(critical_count) +
+        ",\"warning\":" + i64_to_str(warning_count) +
+        ",\"info\":" + i64_to_str(info_count) + "}}"
+
+    resp_body := "{\"stats\":" + stats_arr +
+        ",\"summary\":" + summary + "}"
+    json_response(200, resp_body)
+}
+
+F handle_incidents(method: str, path: str, headers: str, body: str) -> str {
+    path_parts := str_split(path, "?")
+    path_only := json_get(path_parts, "0")
+    query_params := json_get(path_parts, "1")
+    I method == "GET" && str_contains(path_only, "/incidents/stats") {
+        R handle_incident_stats(headers, query_params)
+    }
+    I method == "PUT" && str_contains(path_only, "/acknowledge") {
+        segments := str_split(path_only, "/")
+        incident_id := str_to_i64(json_get(segments, "4"))
+        R handle_acknowledge_incident(headers, incident_id)
+    }
+    I method == "PUT" && str_contains(path_only, "/resolve") {
+        segments := str_split(path_only, "/")
+        incident_id := str_to_i64(json_get(segments, "4"))
+        R handle_resolve_incident(headers, incident_id)
+    }
+    I method == "GET" && str_contains(path_only, "/timeline") {
+        segments := str_split(path_only, "/")
+        incident_id := str_to_i64(json_get(segments, "4"))
+        R handle_get_timeline(headers, incident_id)
+    }
+    I method == "POST" && str_contains(path_only, "/timeline") {
+        segments := str_split(path_only, "/")
+        incident_id := str_to_i64(json_get(segments, "4"))
+        R handle_add_timeline_event(headers, incident_id, body)
+    }
+    I method == "GET" && (path_only == "/api/v1/incidents" || path_only == "/api/v1/incidents/") {
+        R handle_list_incidents(headers, query_params)
+    }
+    I method == "GET" {
+        segments := str_split(path_only, "/")
+        incident_id := str_to_i64(json_get(segments, "4"))
+        R handle_get_incident(headers, incident_id)
+    }
+    I method == "PUT" {
+        segments := str_split(path_only, "/")
+        incident_id := str_to_i64(json_get(segments, "4"))
+        R handle_update_incident(headers, incident_id, body)
+    }
+    error_response(404, "Incidents route not found")
+}

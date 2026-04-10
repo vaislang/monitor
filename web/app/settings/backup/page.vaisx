@@ -1,0 +1,1170 @@
+<template>
+  <div class="backup-page">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <div class="header-left">
+        <button class="back-btn" @click="handleBack">
+          <span class="back-icon">←</span>
+          <span>{t('common.back')}</span>
+        </button>
+        <div class="header-title">
+          <h2>{t('settings.backup')}</h2>
+          <p class="header-subtitle">{t('settings.backupSubtitle')}</p>
+        </div>
+      </div>
+
+      <button
+        class="btn btn-primary"
+        @click="handleCreateBackup"
+        disabled={createLoading}
+      >
+        {#if createLoading}
+          <span class="btn-spinner"></span>
+          <span>{t('settings.backupCreating')}</span>
+        {:else}
+          <span class="btn-icon-sm">▣</span>
+          <span>{t('settings.backupCreate')}</span>
+        {/if}
+      </button>
+    </div>
+
+    <!-- 토스트 알림 -->
+    {#if toastMsg}
+      <div class="toast" class:toast-success={toastType === 'success'} class:toast-error={toastType === 'error'}>
+        <span>{toastMsg}</span>
+      </div>
+    {/if}
+
+    <!-- 탭 네비게이션 -->
+    <div class="tab-nav" role="tablist">
+      {#each tabs as tab}
+        <button
+          class="tab-btn"
+          class:active={activeTab === tab.id}
+          role="tab"
+          aria-selected={activeTab === tab.id}
+          @click={() => setActiveTab(tab.id)}
+        >
+          <span class="tab-icon">{tab.icon}</span>
+          <span>{t(tab.label)}</span>
+        </button>
+      {/each}
+    </div>
+
+    <!-- 백업 목록 탭 -->
+    {#if activeTab === 'list'}
+      <div class="section">
+        <div class="section-header">
+          <h3 class="section-title">{t('settings.backupList')}</h3>
+          <div class="header-actions">
+            <button class="btn btn-outline" @click="loadBackups" disabled={listLoading}>
+              <span class="btn-icon-sm">↺</span>
+              <span>{t('common.refresh')}</span>
+            </button>
+          </div>
+        </div>
+
+        {#if listLoading}
+          <div class="loading-state">
+            <div class="spinner"></div>
+            <span>{t('common.loading')}</span>
+          </div>
+        {:else if backups.length === 0}
+          <div class="empty-state">
+            <span class="empty-icon">▣</span>
+            <p class="empty-title">{t('settings.noBackups')}</p>
+            <p class="empty-desc">{t('settings.noBackupsDesc')}</p>
+            <button class="btn btn-primary" @click="handleCreateBackup">
+              <span>{t('settings.backupCreate')}</span>
+            </button>
+          </div>
+        {:else}
+          <div class="backup-list">
+            <!-- 테이블 헤더 -->
+            <div class="table-header">
+              <div class="col-name">{t('settings.backupName')}</div>
+              <div class="col-size">{t('settings.backupSize')}</div>
+              <div class="col-type">{t('settings.backupType')}</div>
+              <div class="col-date">{t('common.createdAt')}</div>
+              <div class="col-status">{t('common.status')}</div>
+              <div class="col-actions">{t('common.actions')}</div>
+            </div>
+
+            {#each backups as backup}
+              <div class="backup-row">
+                <div class="col-name">
+                  <div class="backup-file-icon">▣</div>
+                  <div class="backup-name-group">
+                    <span class="backup-filename">{backup.name}</span>
+                    <span class="backup-id">#{backup.id}</span>
+                  </div>
+                </div>
+                <div class="col-size">{backup.size}</div>
+                <div class="col-type">
+                  <span class="type-badge" class:type-full={backup.type === 'full'} class:type-incremental={backup.type === 'incremental'}>
+                    {backup.type === 'full' ? t('settings.backupFull') : t('settings.backupIncremental')}
+                  </span>
+                </div>
+                <div class="col-date">{backup.created_at}</div>
+                <div class="col-status">
+                  <span class="status-badge" class:status-done={backup.status === 'completed'} class:status-fail={backup.status === 'failed'} class:status-progress={backup.status === 'in_progress'}>
+                    {#if backup.status === 'completed'}
+                      {t('settings.backupDone')}
+                    {:else if backup.status === 'failed'}
+                      {t('settings.backupFailed')}
+                    {:else}
+                      {t('settings.backupInProgress')}
+                    {/if}
+                  </span>
+                </div>
+                <div class="col-actions">
+                  {#if backup.status === 'completed'}
+                    <button
+                      class="action-btn restore-btn"
+                      @click={() => handleRestoreConfirm(backup)}
+                      title={t('settings.backupRestore')}
+                    >
+                      <span>↩</span>
+                      <span>{t('settings.backupRestore')}</span>
+                    </button>
+                    <button
+                      class="action-btn download-btn"
+                      @click={() => handleDownload(backup)}
+                      title={t('settings.backupDownload')}
+                    >
+                      <span>↓</span>
+                    </button>
+                    <button
+                      class="action-btn delete-btn"
+                      @click={() => handleDeleteConfirm(backup)}
+                      title={t('common.delete')}
+                    >
+                      <span>✕</span>
+                    </button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- 백업 설정 탭 -->
+    {#if activeTab === 'schedule'}
+      <div class="section">
+        <div class="section-header">
+          <h3 class="section-title">{t('settings.backupSchedule')}</h3>
+        </div>
+
+        <form class="settings-form" @submit|preventDefault="handleSaveSchedule">
+          <!-- 자동 백업 토글 -->
+          <div class="toggle-item">
+            <div class="toggle-info">
+              <span class="toggle-label">{t('settings.autoBackup')}</span>
+              <span class="toggle-desc">{t('settings.autoBackupDesc')}</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" bind:checked={autoBackup} />
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="backup-interval">{t('settings.backupInterval')}</label>
+            <select
+              id="backup-interval"
+              class="form-select"
+              bind:value={backupInterval}
+              disabled={!autoBackup}
+            >
+              <option value="daily">{t('settings.intervalDaily')}</option>
+              <option value="weekly">{t('settings.intervalWeekly')}</option>
+              <option value="monthly">{t('settings.intervalMonthly')}</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="backup-retention">{t('settings.backupRetention')}</label>
+            <select
+              id="backup-retention"
+              class="form-select"
+              bind:value={backupRetention}
+              disabled={!autoBackup}
+            >
+              <option value="7">{t('settings.retention7days')}</option>
+              <option value="30">{t('settings.retention30days')}</option>
+              <option value="90">{t('settings.retention90days')}</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="backup-type-select">{t('settings.backupTypeLabel')}</label>
+            <select
+              id="backup-type-select"
+              class="form-select"
+              bind:value={scheduleBackupType}
+            >
+              <option value="full">{t('settings.backupFull')}</option>
+              <option value="incremental">{t('settings.backupIncremental')}</option>
+            </select>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary" disabled={scheduleLoading}>
+              {#if scheduleLoading}
+                <span class="btn-spinner"></span>
+                <span>{t('common.loading')}</span>
+              {:else}
+                <span>{t('common.save')}</span>
+              {/if}
+            </button>
+          </div>
+        </form>
+      </div>
+    {/if}
+
+    <!-- 복원 확인 모달 -->
+    {#if showRestoreModal}
+      <div class="modal-overlay" @click="handleCloseModal">
+        <div class="modal" @click|stopPropagation="">
+          <div class="modal-header">
+            <h3 class="modal-title">{t('settings.restoreConfirmTitle')}</h3>
+            <button class="modal-close-btn" @click="handleCloseModal">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="modal-warning">
+              <span class="warning-icon">⚠</span>
+              <p>{t('settings.restoreWarning')}</p>
+            </div>
+            <p class="modal-desc">
+              {t('settings.restoreDesc')}
+              <strong>{selectedBackup ? selectedBackup.name : ''}</strong>
+            </p>
+          </div>
+          <div class="modal-actions">
+            <button class="btn btn-outline" @click="handleCloseModal">
+              {t('common.cancel')}
+            </button>
+            <button class="btn btn-danger" @click="handleRestore" disabled={restoreLoading}>
+              {#if restoreLoading}
+                <span class="btn-spinner"></span>
+                <span>{t('common.loading')}</span>
+              {:else}
+                <span>↩</span>
+                <span>{t('settings.backupRestore')}</span>
+              {/if}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+    <!-- 삭제 확인 모달 -->
+    {#if showDeleteModal}
+      <div class="modal-overlay" @click="handleCloseDeleteModal">
+        <div class="modal" @click|stopPropagation="">
+          <div class="modal-header">
+            <h3 class="modal-title">{t('settings.deleteBackupTitle')}</h3>
+            <button class="modal-close-btn" @click="handleCloseDeleteModal">✕</button>
+          </div>
+          <div class="modal-body">
+            <p class="modal-desc">
+              {t('settings.deleteBackupDesc')}
+              <strong>{selectedBackup ? selectedBackup.name : ''}</strong>
+            </p>
+          </div>
+          <div class="modal-actions">
+            <button class="btn btn-outline" @click="handleCloseDeleteModal">
+              {t('common.cancel')}
+            </button>
+            <button class="btn btn-danger" @click="handleDelete" disabled={deleteLoading}>
+              {#if deleteLoading}
+                <span class="btn-spinner"></span>
+                <span>{t('common.loading')}</span>
+              {:else}
+                <span>{t('common.delete')}</span>
+              {/if}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
+
+  </div>
+</template>
+
+<script>
+import { create_auth_store } from '../../stores/auth.vais'
+import { t } from '../../i18n.vais'
+
+# 스토어
+let authStore = create_auth_store()
+
+# 탭
+const tabs = [
+  { id: 'list',     icon: '≡', label: 'settings.backupList' },
+  { id: 'schedule', icon: '◷', label: 'settings.backupSchedule' },
+]
+
+let activeTab = 'list'
+
+# 토스트
+let toastMsg = ''
+let toastType = 'success'
+let toastTimer = null
+
+# 백업 목록
+let backups = []
+let listLoading = false
+let createLoading = false
+
+# 스케줄 설정
+let autoBackup = false
+let backupInterval = 'daily'
+let backupRetention = '30'
+let scheduleBackupType = 'full'
+let scheduleLoading = false
+
+# 모달
+let showRestoreModal = false
+let showDeleteModal = false
+let selectedBackup = null
+let restoreLoading = false
+let deleteLoading = false
+
+F setActiveTab(tabId: str) {
+  activeTab = tabId
+}
+
+F showToast(msg: str, type: str) {
+  toastMsg = msg
+  toastType = type
+  if toastTimer { clearTimeout(toastTimer) }
+  toastTimer = setTimeout(function() {
+    toastMsg = ''
+  }, 3000)
+}
+
+F handleBack() {
+  router.navigate('/settings')
+}
+
+# 백업 목록 불러오기
+A F loadBackups() {
+  listLoading = true
+  let token = authStore.token
+  let response = Y fetch_get_with_token("/api/v1/backups", token)
+  let status = json_get(response, "status")
+  if status == "200" {
+    let resp_body = json_get(response, "body")
+    let backups_json = json_get(resp_body, "backups")
+    if str_len(backups_json) > 0 {
+      backups = JSON.parse(backups_json)
+    } else {
+      backups = []
+    }
+  } else {
+    # 목 데이터 폴백
+    backups = [
+      { id: 3, name: 'backup-2026-04-06-0900.tar.gz', size: '128 MB', type: 'full',        created_at: '2026-04-06 09:00', status: 'completed' },
+      { id: 2, name: 'backup-2026-04-05-0900.tar.gz', size: '42 MB',  type: 'incremental', created_at: '2026-04-05 09:00', status: 'completed' },
+      { id: 1, name: 'backup-2026-04-04-0900.tar.gz', size: '125 MB', type: 'full',        created_at: '2026-04-04 09:00', status: 'completed' },
+    ]
+  }
+  listLoading = false
+}
+
+# 백업 생성
+A F handleCreateBackup() {
+  createLoading = true
+  let token = authStore.token
+  let body = "{\"type\":\"full\"}"
+  let response = Y fetch_post_with_token("/api/v1/backups", body, token)
+  let status = json_get(response, "status")
+  if status == "201" || status == "200" {
+    showToast(t('settings.backupCreated'), 'success')
+    Y loadBackups()
+  } else {
+    showToast(t('settings.backupCreateFailed'), 'error')
+  }
+  createLoading = false
+}
+
+# 복원 확인 모달 열기
+F handleRestoreConfirm(backup) {
+  selectedBackup = backup
+  showRestoreModal = true
+}
+
+# 삭제 확인 모달 열기
+F handleDeleteConfirm(backup) {
+  selectedBackup = backup
+  showDeleteModal = true
+}
+
+F handleCloseModal() {
+  showRestoreModal = false
+  selectedBackup = null
+}
+
+F handleCloseDeleteModal() {
+  showDeleteModal = false
+  selectedBackup = null
+}
+
+# 복원 실행
+A F handleRestore() {
+  if !selectedBackup { R }
+  restoreLoading = true
+  let token = authStore.token
+  let backup_id = selectedBackup.id.toString()
+  let body = "{\"backup_id\":" + backup_id + "}"
+  let response = Y fetch_post_with_token("/api/v1/backups/restore", body, token)
+  let status = json_get(response, "status")
+  if status == "200" || status == "202" {
+    showToast(t('settings.restoreStarted'), 'success')
+    handleCloseModal()
+  } else {
+    showToast(t('settings.restoreFailed'), 'error')
+  }
+  restoreLoading = false
+}
+
+# 삭제 실행
+A F handleDelete() {
+  if !selectedBackup { R }
+  deleteLoading = true
+  let token = authStore.token
+  let backup_id = selectedBackup.id.toString()
+  let response = Y fetch_delete_with_token("/api/v1/backups/" + backup_id, token)
+  let status = json_get(response, "status")
+  if status == "200" || status == "204" {
+    showToast(t('settings.backupDeleted'), 'success')
+    handleCloseDeleteModal()
+    Y loadBackups()
+  } else {
+    showToast(t('settings.backupDeleteFailed'), 'error')
+  }
+  deleteLoading = false
+}
+
+# 다운로드
+F handleDownload(backup) {
+  let token = authStore.token
+  let backup_id = backup.id.toString()
+  window.location.href = '/api/v1/backups/' + backup_id + '/download?token=' + token
+}
+
+# 스케줄 설정 저장
+A F handleSaveSchedule() {
+  scheduleLoading = true
+  let token = authStore.token
+  let auto_val = if autoBackup { "true" } else { "false" }
+  let body = "{\"auto_backup\":" + auto_val + ",\"interval\":\"" + backupInterval + "\",\"retention_days\":" + backupRetention + ",\"type\":\"" + scheduleBackupType + "\"}"
+  let response = Y fetch_put_with_token("/api/v1/backups/schedule", body, token)
+  let status = json_get(response, "status")
+  if status == "200" {
+    showToast(t('settings.saveSuccess'), 'success')
+  } else {
+    showToast(t('settings.saveFailed'), 'error')
+  }
+  scheduleLoading = false
+}
+
+# 스케줄 설정 불러오기
+A F loadSchedule() {
+  let token = authStore.token
+  let response = Y fetch_get_with_token("/api/v1/backups/schedule", token)
+  let status = json_get(response, "status")
+  if status == "200" {
+    let resp_body = json_get(response, "body")
+    let auto_val = json_get(resp_body, "auto_backup")
+    let interval_val = json_get(resp_body, "interval")
+    let retention_val = json_get(resp_body, "retention_days")
+    let type_val = json_get(resp_body, "type")
+    autoBackup = auto_val == "true"
+    if str_len(interval_val) > 0 { backupInterval = interval_val }
+    if str_len(retention_val) > 0 { backupRetention = retention_val }
+    if str_len(type_val) > 0 { scheduleBackupType = type_val }
+  }
+}
+
+# 초기 로드
+loadBackups()
+loadSchedule()
+</script>
+
+<style scoped>
+.backup-page {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+/* 페이지 헤더 */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 24px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.back-btn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.back-icon {
+  font-size: 14px;
+}
+
+.header-title h2 {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+  letter-spacing: -0.3px;
+}
+
+.header-subtitle {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+/* 탭 */
+.tab-nav {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+
+.tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--color-text-primary);
+}
+
+.tab-btn.active {
+  color: var(--color-primary);
+  border-bottom-color: var(--color-primary);
+}
+
+.tab-icon {
+  font-size: 14px;
+}
+
+/* 토스트 */
+.toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  z-index: 300;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  animation: fadeSlide 0.2s ease;
+}
+
+.toast-success { background: var(--color-success); color: #ffffff; }
+.toast-error   { background: var(--color-danger);  color: #ffffff; }
+
+@keyframes fadeSlide {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 섹션 */
+.section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 24px;
+  margin-bottom: 24px;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.section-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* 버튼 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 9px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.btn-outline {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-outline:hover:not(:disabled) {
+  background: var(--color-hover);
+  border-color: var(--color-border-hover);
+}
+
+.btn-danger {
+  background: var(--color-danger);
+  color: #ffffff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.btn-icon-sm {
+  font-size: 14px;
+}
+
+.btn-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 백업 테이블 */
+.backup-list {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.table-header {
+  display: grid;
+  grid-template-columns: 2fr 80px 100px 160px 90px 160px;
+  padding: 10px 16px;
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  gap: 12px;
+}
+
+.backup-row {
+  display: grid;
+  grid-template-columns: 2fr 80px 100px 160px 90px 160px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-border);
+  align-items: center;
+  gap: 12px;
+  transition: background 0.15s;
+}
+
+.backup-row:last-child {
+  border-bottom: none;
+}
+
+.backup-row:hover {
+  background: var(--color-hover);
+}
+
+.col-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.backup-file-icon {
+  font-size: 20px;
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.backup-name-group {
+  min-width: 0;
+}
+
+.backup-filename {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.backup-id {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.col-size {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.col-type,
+.col-date,
+.col-status,
+.col-actions {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.col-date {
+  white-space: nowrap;
+}
+
+.type-badge {
+  display: inline-flex;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.type-full {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--color-primary);
+}
+
+.type-incremental {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--color-warning);
+}
+
+.status-badge {
+  display: inline-flex;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 12px;
+}
+
+.status-done     { background: rgba(16, 185, 129, 0.12); color: var(--color-success); }
+.status-fail     { background: var(--color-danger-muted); color: var(--color-danger); }
+.status-progress { background: rgba(59, 130, 246, 0.12); color: var(--color-info); }
+
+.col-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.restore-btn {
+  background: rgba(99, 102, 241, 0.1);
+  color: var(--color-primary);
+}
+
+.restore-btn:hover {
+  background: rgba(99, 102, 241, 0.2);
+}
+
+.download-btn {
+  background: var(--color-hover);
+  color: var(--color-text-secondary);
+  padding: 5px 8px;
+}
+
+.download-btn:hover {
+  background: var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.delete-btn {
+  background: var(--color-danger-muted);
+  color: var(--color-danger);
+  padding: 5px 8px;
+}
+
+.delete-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* 폼 */
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.form-select {
+  width: 100%;
+  max-width: 300px;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.form-select:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.form-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+/* 토글 */
+.toggle-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  gap: 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+}
+
+.toggle-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toggle-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.toggle-desc {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.toggle-track {
+  display: block;
+  width: 40px;
+  height: 22px;
+  background: var(--color-border);
+  border-radius: 11px;
+  cursor: pointer;
+  transition: background 0.2s;
+  position: relative;
+}
+
+.toggle-track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-switch input:checked + .toggle-track {
+  background: var(--color-primary);
+}
+
+.toggle-switch input:checked + .toggle-track::after {
+  transform: translateX(18px);
+}
+
+/* 빈 상태 / 로딩 */
+.loading-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 48px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 56px 24px;
+  text-align: center;
+}
+
+.empty-icon {
+  font-size: 36px;
+  opacity: 0.3;
+  color: var(--color-text-muted);
+}
+
+.empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.empty-desc {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+}
+
+/* 모달 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 400;
+  padding: 24px;
+}
+
+.modal {
+  width: 100%;
+  max-width: 440px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.modal-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+
+.modal-close-btn:hover {
+  color: var(--color-text-primary);
+  background: var(--color-hover);
+}
+
+.modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  border-radius: 8px;
+}
+
+.warning-icon {
+  font-size: 16px;
+  color: var(--color-warning);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.modal-warning p {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+}
+
+.modal-desc {
+  font-size: 14px;
+  color: var(--color-text-primary);
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-border);
+}
+
+@media (max-width: 640px) {
+  .table-header,
+  .backup-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .table-header {
+    display: none;
+  }
+
+  .backup-row {
+    padding: 12px 14px;
+    border-radius: 0;
+  }
+}
+</style>

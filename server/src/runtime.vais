@@ -1,0 +1,155 @@
+# vais-server runtime externals
+
+# HTTP Server
+X F server_listen(host: &str, port: i64)
+X F server_stop()
+
+# String utilities
+X F str_len(s: &str) -> i64
+X F str_char_at(s: &str, idx: i64) -> str
+X F str_slice(s: &str, start: i64, end: i64) -> str
+X F str_contains(s: &str, substr: &str) -> bool
+# str_split — pure vais implementation (returns JSON array string)
+# Usage: parts := str_split(s, delim)  → '["a","b","c"]'
+# Access: json_get(parts, "0"), json_get(parts, "1"), etc.
+F str_split(s: &str, delim: &str) -> str {
+    result := "["
+    start := 0
+    dlen := str_len(delim)
+    slen := str_len(s)
+    count := 0
+    i := 0
+    LW i <= slen - dlen {
+        chunk := str_slice(s, i, i + dlen)
+        I chunk == delim {
+            I count > 0 {
+                result = result + ","
+            }
+            part := str_slice(s, start, i)
+            result = result + "\"" + part + "\""
+            count = count + 1
+            start = i + dlen
+            i = i + dlen
+        } EL {
+            i = i + 1
+        }
+    }
+    # last segment
+    I count > 0 {
+        result = result + ","
+    }
+    last := str_slice(s, start, slen)
+    result = result + "\"" + last + "\""
+    result = result + "]"
+    R result
+}
+
+# str_split_get — get item at index from str_split result
+F str_split_get(split_result: &str, index: i64) -> str {
+    json_get(split_result, i64_to_str(index))
+}
+
+# str_split_count — count items in str_split result
+F str_split_count(split_result: &str) -> i64 {
+    slen := str_len(split_result)
+    I slen <= 2 {
+        R 0
+    }
+    count := 1
+    i := 0
+    LW i < slen {
+        ch := str_char_at(split_result, i)
+        I ch == "," {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    R count
+}
+# count_json_array — count top-level elements in a JSON array string
+# Handles nested objects/arrays by tracking depth
+F count_json_array(arr: &str) -> i64 {
+    slen := str_len(arr)
+    I slen <= 2 {
+        R 0
+    }
+    count := 0
+    depth := 0
+    i := 1
+    LW i < slen - 1 {
+        ch := str_char_at(arr, i)
+        I ch == "{" || ch == "[" {
+            depth = depth + 1
+        } EL I ch == "}" || ch == "]" {
+            depth = depth - 1
+        } EL I ch == "," && depth == 0 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    # if there was any content, count = commas + 1
+    I slen > 2 {
+        count = count + 1
+    }
+    R count
+}
+
+X F str_trim(s: &str) -> str
+X F str_to_lower(s: &str) -> str
+X F str_to_upper(s: &str) -> str
+X F str_replace(s: &str, old: &str, new_val: &str) -> str
+X F str_starts_with(s: &str, prefix: &str) -> bool
+X F str_ends_with(s: &str, suffix: &str) -> bool
+
+# I/O
+X F println(s: &str)
+X F read_file(path: &str) -> str
+X F write_file(path: &str, content: &str)
+
+# Time
+X F current_time_ms() -> i64
+X F sleep_ms(ms: i64)
+
+# Number conversion
+X F i64_to_str(n: i64) -> str
+X F f64_to_str(n: f64) -> str
+X F str_to_i64(s: &str) -> i64
+X F str_to_f64(s: &str) -> f64
+
+# Math
+X F floor(n: f64) -> f64
+X F ceil(n: f64) -> f64
+X F sqrt(n: f64) -> f64
+X F abs_f64(n: f64) -> f64
+X F abs_i64(n: i64) -> i64
+
+# Random
+X F random_i64(min: i64, max: i64) -> i64
+X F random_f64() -> f64
+
+# vaisdb runtime externals
+X F db_connect(path: &str)
+X F db_execute(sql: &str) -> i64
+X F db_query(sql: &str) -> str
+X F db_close()
+X F db_begin_transaction()
+X F db_commit()
+X F db_rollback()
+X F db_prepare(name: &str, sql: &str)
+X F db_execute_prepared(name: &str, params: &str) -> i64
+
+# Crypto / Auth
+X F hash_password(password: &str) -> str
+X F verify_password(password: &str, hash: &str) -> bool
+X F jwt_encode(claims: &str, secret: &str) -> str
+X F jwt_decode(token: &str, secret: &str) -> str
+X F generate_uuid() -> str
+
+# JSON
+X F json_parse(s: &str) -> str
+X F json_stringify(obj: &str) -> str
+X F json_get(json: &str, key: &str) -> str
+X F json_set(json: &str, key: &str, value: &str) -> str
+
+# Environment
+X F env_get(key: &str) -> str

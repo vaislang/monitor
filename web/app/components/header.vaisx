@@ -1,0 +1,399 @@
+<template>
+  <header class="app-header">
+    <div class="header-left">
+      <h1 class="page-title">{pageTitle}</h1>
+    </div>
+
+    <div class="header-right">
+      <!-- 알림 벨 -->
+      <button class="header-btn notification-btn" @click={handleNotifications} title={t('header.notifications')} aria-label={t('header.notifications')}>
+        <span class="btn-icon">🔔</span>
+        {#if notificationsCount > 0}
+          <span class="badge">{notificationsCount > 99 ? '99+' : notificationsCount}</span>
+        {/if}
+      </button>
+
+      <!-- 언어 전환 -->
+      <button class="header-btn locale-btn" @click={handleToggleLocale} title={t('header.toggleLocale')} aria-label={t('header.toggleLocale')}>
+        <span class="btn-icon">{currentLocale === 'ko' ? 'KO' : 'EN'}</span>
+      </button>
+
+      <!-- 테마 토글 -->
+      <button class="header-btn theme-btn" @click={handleToggleTheme} title={t('header.toggleTheme')} aria-label={t('header.toggleTheme')}>
+        {#if isDarkTheme}
+          <span class="btn-icon">☀</span>
+        {:else}
+          <span class="btn-icon">☾</span>
+        {/if}
+      </button>
+
+      <!-- 사용자 메뉴 -->
+      <div class="user-menu">
+        <button class="user-btn" @click={handleToggleUserMenu} aria-expanded={userMenuOpen}>
+          <div class="user-avatar">
+            <span>{userInitial}</span>
+          </div>
+          <div class="user-info">
+            <span class="user-name">{userName}</span>
+            <span class="user-role">{userRole}</span>
+          </div>
+          <span class="chevron">{userMenuOpen ? '▲' : '▼'}</span>
+        </button>
+
+        {#if userMenuOpen}
+          <div class="user-dropdown" role="menu">
+            <div class="dropdown-header">
+              <span class="dropdown-email">{userEmail}</span>
+            </div>
+            <div class="dropdown-divider"></div>
+            <a href="/settings" class="dropdown-item" role="menuitem" @click={e => handleDropdownNav(e, '/settings')}>
+              <span class="item-icon">⚙</span>
+              <span>{t('header.settings')}</span>
+            </a>
+            <div class="dropdown-divider"></div>
+            <button class="dropdown-item logout-item" role="menuitem" @click={handleLogout}>
+              <span class="item-icon">→</span>
+              <span>{t('header.logout')}</span>
+            </button>
+          </div>
+        {/if}
+      </div>
+    </div>
+  </header>
+</template>
+
+<script>
+import { appStore, toggle_theme, toggle_locale, locale_to_str, is_dark_theme } from '../stores/app.vais'
+import { authStore, logout } from '../stores/auth.vais'
+import { t } from '../i18n.vais'
+
+let pageTitle = appStore.page_title
+let notificationsCount = appStore.notifications_count
+let currentLocale = locale_to_str(appStore)
+let isDarkTheme = is_dark_theme(appStore)
+let userMenuOpen = false
+
+let userName = ''
+let userEmail = ''
+let userRole = ''
+let userInitial = '?'
+
+$: pageTitle = appStore.page_title
+$: notificationsCount = appStore.notifications_count
+$: currentLocale = locale_to_str(appStore)
+$: isDarkTheme = is_dark_theme(appStore)
+
+$: {
+  if (authStore.user) {
+    const user = JSON.parse(authStore.user)
+    userName = user.name || user.email || ''
+    userEmail = user.email || ''
+    userRole = user.role || ''
+    userInitial = userName.length > 0 ? userName[0].toUpperCase() : '?'
+  }
+}
+
+function handleToggleTheme(e) {
+  e.preventDefault()
+  toggle_theme(appStore)
+  isDarkTheme = is_dark_theme(appStore)
+}
+
+function handleToggleLocale(e) {
+  e.preventDefault()
+  toggle_locale(appStore)
+  currentLocale = locale_to_str(appStore)
+}
+
+function handleNotifications(e) {
+  e.preventDefault()
+  router.navigate('/alerts')
+}
+
+function handleToggleUserMenu(e) {
+  e.preventDefault()
+  userMenuOpen = !userMenuOpen
+}
+
+async function handleLogout(e) {
+  e.preventDefault()
+  userMenuOpen = false
+  await logout(authStore)
+  router.navigate('/auth/login')
+}
+
+function handleDropdownNav(e, path) {
+  e.preventDefault()
+  userMenuOpen = false
+  router.navigate(path)
+}
+
+// 외부 클릭 시 드롭다운 닫기
+let closeMenuHandler = function(e) {
+  const menu = document.querySelector('.user-menu')
+  if (menu && !menu.contains(e.target)) {
+    userMenuOpen = false
+  }
+}
+document.addEventListener('click', closeMenuHandler)
+
+F onDestroy() {
+  document.removeEventListener('click', closeMenuHandler)
+}
+</script>
+
+<style scoped>
+.app-header {
+  height: 60px;
+  background: var(--color-header-bg, #ffffff);
+  border-bottom: 1px solid var(--color-border, #e5e7eb);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+  z-index: 90;
+  flex-shrink: 0;
+}
+
+.theme-dark .app-header {
+  background: var(--color-header-bg-dark, #1e2130);
+  border-bottom-color: var(--color-border-dark, #2a2d3e);
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--color-text-primary, #111827);
+  margin: 0;
+}
+
+.theme-dark .page-title {
+  color: var(--color-text-primary-dark, #e2e8f0);
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-btn {
+  position: relative;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 8px;
+  color: var(--color-text-secondary, #6b7280);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  min-width: 36px;
+  min-height: 36px;
+}
+
+.header-btn:hover {
+  background: var(--color-hover, #f3f4f6);
+  color: var(--color-text-primary, #111827);
+}
+
+.theme-dark .header-btn:hover {
+  background: var(--color-hover-dark, #2a2d3e);
+  color: var(--color-text-primary-dark, #e2e8f0);
+}
+
+.btn-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.locale-btn .btn-icon {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  background: var(--color-danger, #ef4444);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 8px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 14px;
+}
+
+/* 사용자 메뉴 */
+.user-menu {
+  position: relative;
+}
+
+.user-btn {
+  background: none;
+  border: 1px solid var(--color-border, #e5e7eb);
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--color-text-primary, #111827);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.user-btn:hover {
+  background: var(--color-hover, #f3f4f6);
+  border-color: var(--color-border-hover, #d1d5db);
+}
+
+.theme-dark .user-btn {
+  border-color: var(--color-border-dark, #2a2d3e);
+  color: var(--color-text-primary-dark, #e2e8f0);
+}
+
+.theme-dark .user-btn:hover {
+  background: var(--color-hover-dark, #2a2d3e);
+}
+
+.user-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--color-primary, #6366f1);
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.user-role {
+  font-size: 11px;
+  color: var(--color-text-secondary, #6b7280);
+  text-transform: capitalize;
+}
+
+.chevron {
+  font-size: 10px;
+  color: var(--color-text-secondary, #6b7280);
+  margin-left: 4px;
+}
+
+/* 드롭다운 */
+.user-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 220px;
+  background: var(--color-dropdown-bg, #ffffff);
+  border: 1px solid var(--color-border, #e5e7eb);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+  z-index: 200;
+}
+
+.theme-dark .user-dropdown {
+  background: var(--color-dropdown-bg-dark, #1e2130);
+  border-color: var(--color-border-dark, #2a2d3e);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.dropdown-header {
+  padding: 12px 14px;
+}
+
+.dropdown-email {
+  font-size: 12px;
+  color: var(--color-text-secondary, #6b7280);
+  word-break: break-all;
+}
+
+.dropdown-divider {
+  height: 1px;
+  background: var(--color-border, #e5e7eb);
+  margin: 0;
+}
+
+.theme-dark .dropdown-divider {
+  background: var(--color-border-dark, #2a2d3e);
+}
+
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  color: var(--color-text-primary, #111827);
+  font-size: 14px;
+  transition: background 0.15s;
+  text-align: left;
+}
+
+.dropdown-item:hover {
+  background: var(--color-hover, #f3f4f6);
+}
+
+.theme-dark .dropdown-item {
+  color: var(--color-text-primary-dark, #e2e8f0);
+}
+
+.theme-dark .dropdown-item:hover {
+  background: var(--color-hover-dark, #2a2d3e);
+}
+
+.logout-item {
+  color: var(--color-danger, #ef4444);
+}
+
+.logout-item:hover {
+  background: var(--color-danger-muted, #fef2f2);
+}
+
+.theme-dark .logout-item:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.item-icon {
+  font-size: 14px;
+  width: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+</style>

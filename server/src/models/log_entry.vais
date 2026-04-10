@@ -1,0 +1,314 @@
+
+# ============================================================================
+# 도메인 모델
+# ============================================================================
+
+# LogEntry 모델
+S LogEntry {
+    id: i64,
+    service_id: i64,
+    level: str,           # DEBUG/INFO/WARN/ERROR/FATAL
+    message: str,
+    source: str,
+    trace_id: str,
+    timestamp: i64,
+    ttl_seconds: i64,
+}
+
+# LogLevel 열거형
+EN LogLevel {
+    DEBUG,
+    INFO,
+    WARN,
+    ERROR,
+    FATAL,
+}
+
+# ============================================================================
+# 로그 레벨 유틸
+# ============================================================================
+
+# 로그 레벨 문자열 대문자 정규화
+F parse_log_level(level: str) -> str {
+    str_to_upper(str_trim(level))
+}
+
+# 유효한 로그 레벨인지 확인
+F is_valid_log_level(level: str) -> bool {
+    normalized := parse_log_level(level)
+    normalized == "DEBUG" || normalized == "INFO" || normalized == "WARN" || normalized == "ERROR" || normalized == "FATAL"
+}
+
+# ============================================================================
+# 직렬화 헬퍼
+# ============================================================================
+
+# 로그 엔트리 JSON 직렬화
+F log_entry_to_json(id: i64, service_id: i64, level: str, message: str, source: str, trace_id: str, timestamp: i64) -> str {
+    result := "{}"
+    result := json_set(result, "id", i64_to_str(id))
+    result := json_set(result, "service_id", i64_to_str(service_id))
+    result := json_set(result, "level", level)
+    result := json_set(result, "message", message)
+    result := json_set(result, "source", source)
+    result := json_set(result, "trace_id", trace_id)
+    result := json_set(result, "timestamp", i64_to_str(timestamp))
+    result
+}
+
+# ============================================================================
+# Log Repository — 저장
+# ============================================================================
+
+# 단건 로그 수집
+# 반환: 새 로그 ID (0이면 실패)
+F ingest_log(service_id: i64, level: str, message: str, source: str, trace_id: str, ttl_seconds: i64) -> i64 {
+    normalized_level := parse_log_level(level)
+    now_ms := current_time_ms()
+    now_sec := now_ms / 1000
+    ttl := I ttl_seconds > 0 { ttl_seconds } EL { 604800 }
+    db_prepare("ingest_log",
+        "INSERT INTO logs (service_id, level, message, source, trace_id, timestamp, ttl_seconds) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    params := "[]"
+    params := json_set(params, "0", i64_to_str(service_id))
+    params := json_set(params, "1", normalized_level)
+    params := json_set(params, "2", message)
+    params := json_set(params, "3", source)
+    params := json_set(params, "4", trace_id)
+    params := json_set(params, "5", i64_to_str(now_sec))
+    params := json_set(params, "6", i64_to_str(ttl))
+    db_execute_prepared("ingest_log", params)
+}
+
+# 배치 로그 수집 — JSON 배열 파싱 후 다중 INSERT
+# logs_json 형식: [{"service_id":N,"level":"ERROR","message":"...","source":"...","trace_id":"...","ttl_seconds":N}, ...]
+# 반환: 수집된 로그 수
+F ingest_logs_batch(logs_json: str) -> i64 {
+    items := str_split(logs_json, "},{")
+    count := 0
+    i := 0
+    LW true {
+        item_raw := json_get(items, i64_to_str(i))
+        I str_len(item_raw) == 0 {
+            R count
+        }
+        # 괄호 정리
+        item := str_replace(item_raw, "[{", "{")
+        item := str_replace(item, "}]", "}")
+        item := str_replace(item, "[", "")
+        item := str_replace(item, "]", "")
+        I !str_starts_with(item, "{") {
+            item = "{" + item
+        }
+        I !str_ends_with(item, "}") {
+            item = item + "}"
+        }
+        svc_id_str := json_get(item, "service_id")
+        I str_len(svc_id_str) > 0 {
+            svc_id := str_to_i64(svc_id_str)
+            level := json_get(item, "level")
+            message := json_get(item, "message")
+            source := json_get(item, "source")
+            trace_id := json_get(item, "trace_id")
+            ttl_str := json_get(item, "ttl_seconds")
+            ttl := I str_len(ttl_str) > 0 { str_to_i64(ttl_str) } EL { 604800 }
+            inserted := ingest_log(svc_id, level, message, source, trace_id, ttl)
+            I inserted > 0 {
+                count = count + 1
+            }
+        }
+        i = i + 1
+    }
+    count
+}
+
+# ============================================================================
+# Log Repository — 조회
+# ============================================================================
+
+# ID로 로그 단건 조회
+# 반환: log JSON or ""
+F get_log_by_id(id: i64) -> str {
+    row := db_query(
+        "SELECT id, service_id, level, message, source, trace_id, timestamp, ttl_seconds " +
+        "FROM logs WHERE id = " + i64_to_str(id) + " LIMIT 1"
+    )
+    id_str := json_get(row, "id")
+    I str_len(id_str) == 0 {
+        ""
+    } EL {
+        log_entry_to_json(
+            str_to_i64(id_str),
+            str_to_i64(json_get(row, "service_id")),
+            json_get(row, "level"),
+            json_get(row, "message"),
+            json_get(row, "source"),
+            json_get(row, "trace_id"),
+            str_to_i64(json_get(row, "timestamp"))
+        )
+    }
+}
+
+# 로그 목록 조회 (레벨 필터, 시간 범위, 페이징)
+# level = "" 이면 전체, from_ts/to_ts = 0 이면 무제한
+# 반환: JSON array string
+F get_logs(service_id: i64, level: str, from_ts: i64, to_ts: i64, limit: i64, offset: i64) -> str {
+    where_clause := " WHERE service_id = " + i64_to_str(service_id)
+    normalized := parse_log_level(level)
+    safe_normalized := str_replace(normalized, "'", "''")
+    where_clause := I str_len(normalized) > 0 {
+        where_clause + " AND level = '" + safe_normalized + "'"
+    } EL {
+        where_clause
+    }
+    where_clause := I from_ts > 0 {
+        where_clause + " AND timestamp >= " + i64_to_str(from_ts)
+    } EL {
+        where_clause
+    }
+    where_clause := I to_ts > 0 {
+        where_clause + " AND timestamp <= " + i64_to_str(to_ts)
+    } EL {
+        where_clause
+    }
+    safe_limit := I limit < 1 { 50 } EL { limit }
+    safe_limit := I safe_limit > 1000 { 1000 } EL { safe_limit }
+    safe_offset := I offset < 0 { 0 } EL { offset }
+    db_query(
+        "SELECT id, service_id, level, message, source, trace_id, timestamp, ttl_seconds " +
+        "FROM logs" + where_clause +
+        " ORDER BY timestamp DESC" +
+        " LIMIT " + i64_to_str(safe_limit) +
+        " OFFSET " + i64_to_str(safe_offset)
+    )
+}
+
+# 로그 수 카운트 (레벨 필터, 시간 범위)
+F count_logs(service_id: i64, level: str, from_ts: i64, to_ts: i64) -> i64 {
+    where_clause := " WHERE service_id = " + i64_to_str(service_id)
+    normalized := parse_log_level(level)
+    safe_normalized := str_replace(normalized, "'", "''")
+    where_clause := I str_len(normalized) > 0 {
+        where_clause + " AND level = '" + safe_normalized + "'"
+    } EL {
+        where_clause
+    }
+    where_clause := I from_ts > 0 {
+        where_clause + " AND timestamp >= " + i64_to_str(from_ts)
+    } EL {
+        where_clause
+    }
+    where_clause := I to_ts > 0 {
+        where_clause + " AND timestamp <= " + i64_to_str(to_ts)
+    } EL {
+        where_clause
+    }
+    row := db_query("SELECT COUNT(*) as cnt FROM logs" + where_clause)
+    str_to_i64(json_get(row, "cnt"))
+}
+
+# ============================================================================
+# 풀텍스트 검색 — VaisDB Full-Text API
+# ============================================================================
+
+# BM25 풀텍스트 검색
+# service_id = 0 이면 전체 서비스, from_ts/to_ts = 0 이면 무제한
+# 반환: JSON array string
+F search_logs_fulltext(query: str, service_id: i64, from_ts: i64, to_ts: i64, limit: i64, offset: i64) -> str {
+    safe_query := str_replace(query, "'", "''")
+    where_clause := " WHERE FULLTEXT_MATCH(message, '" + safe_query + "') USING BM25"
+    where_clause := I service_id > 0 {
+        where_clause + " AND service_id = " + i64_to_str(service_id)
+    } EL {
+        where_clause
+    }
+    where_clause := I from_ts > 0 {
+        where_clause + " AND timestamp >= " + i64_to_str(from_ts)
+    } EL {
+        where_clause
+    }
+    where_clause := I to_ts > 0 {
+        where_clause + " AND timestamp <= " + i64_to_str(to_ts)
+    } EL {
+        where_clause
+    }
+    safe_limit := I limit < 1 { 50 } EL { limit }
+    safe_limit := I safe_limit > 1000 { 1000 } EL { safe_limit }
+    safe_offset := I offset < 0 { 0 } EL { offset }
+    db_query(
+        "SELECT id, service_id, level, message, source, trace_id, timestamp, ttl_seconds " +
+        "FROM logs" + where_clause +
+        " ORDER BY timestamp DESC" +
+        " LIMIT " + i64_to_str(safe_limit) +
+        " OFFSET " + i64_to_str(safe_offset)
+    )
+}
+
+# BOOLEAN 모드 풀텍스트 검색 (AND/OR/NOT 연산자 지원)
+# 예: "error AND timeout", "crash OR panic"
+# service_id = 0 이면 전체 서비스
+# rls_team_filter: RLS 팀 필터 SQL 조건절 (빈 문자열이면 미적용)
+# 반환: JSON array string
+F search_logs_boolean(query: str, service_id: i64, limit: i64, rls_team_filter: str) -> str {
+    safe_query := str_replace(query, "'", "''")
+    where_clause := " WHERE MATCH(message, '" + safe_query + "') USING BOOLEAN"
+    where_clause := I service_id > 0 {
+        where_clause + " AND service_id = " + i64_to_str(service_id)
+    } EL {
+        where_clause
+    }
+    where_clause := I str_len(rls_team_filter) > 0 {
+        where_clause + rls_team_filter
+    } EL {
+        where_clause
+    }
+    safe_limit := I limit < 1 { 50 } EL { limit }
+    safe_limit := I safe_limit > 1000 { 1000 } EL { safe_limit }
+    db_query(
+        "SELECT id, service_id, level, message, source, trace_id, timestamp, ttl_seconds " +
+        "FROM logs" + where_clause +
+        " ORDER BY timestamp DESC" +
+        " LIMIT " + i64_to_str(safe_limit)
+    )
+}
+
+# PHRASE 모드 풀텍스트 검색 (완전 일치 구문 검색)
+# 예: "connection refused", "out of memory"
+# service_id = 0 이면 전체 서비스
+# rls_team_filter: RLS 팀 필터 SQL 조건절 (빈 문자열이면 미적용)
+# 반환: JSON array string
+F search_logs_phrase(phrase: str, service_id: i64, limit: i64, rls_team_filter: str) -> str {
+    safe_phrase := str_replace(phrase, "'", "''")
+    where_clause := " WHERE PHRASE(message, '" + safe_phrase + "')"
+    where_clause := I service_id > 0 {
+        where_clause + " AND service_id = " + i64_to_str(service_id)
+    } EL {
+        where_clause
+    }
+    where_clause := I str_len(rls_team_filter) > 0 {
+        where_clause + rls_team_filter
+    } EL {
+        where_clause
+    }
+    safe_limit := I limit < 1 { 50 } EL { limit }
+    safe_limit := I safe_limit > 1000 { 1000 } EL { safe_limit }
+    db_query(
+        "SELECT id, service_id, level, message, source, trace_id, timestamp, ttl_seconds " +
+        "FROM logs" + where_clause +
+        " ORDER BY timestamp DESC" +
+        " LIMIT " + i64_to_str(safe_limit)
+    )
+}
+
+# ============================================================================
+# 만료 로그 정리
+# ============================================================================
+
+# TTL이 만료된 로그 삭제
+# 반환: 삭제된 행 수
+F cleanup_expired_logs() -> i64 {
+    now_sec := current_time_ms() / 1000
+    db_execute(
+        "DELETE FROM logs WHERE (timestamp + ttl_seconds) < " + i64_to_str(now_sec)
+    )
+}

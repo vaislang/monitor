@@ -1,0 +1,462 @@
+<template>
+  <div class="login-page">
+    <div class="login-card">
+      <!-- 헤더 -->
+      <div class="card-header">
+        <div class="logo">
+          <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+            <rect width="36" height="36" rx="8" fill="var(--color-primary)" />
+            <path d="M10 18L16 12L22 18L28 12" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M10 24L16 18L22 24L28 18" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.6" />
+          </svg>
+          <span class="logo-text">Vais Monitor</span>
+        </div>
+        <h1 class="card-title">{t('auth.loginTitle')}</h1>
+        <p class="card-subtitle">{t('auth.loginSubtitle')}</p>
+      </div>
+
+      <!-- 에러 메시지 -->
+      {#if errorMessage}
+        <div class="alert alert-error" role="alert">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 1a7 7 0 100 14A7 7 0 008 1zm.75 4a.75.75 0 01-1.5 0V6a.75.75 0 011.5 0V5zM8 9a.75.75 0 000 1.5h.005A.75.75 0 008 9z" />
+          </svg>
+          <span>{errorMessage}</span>
+        </div>
+      {/if}
+
+      <!-- 로그인 폼 -->
+      <form class="auth-form" @submit|preventDefault="handleLogin">
+        <div class="form-group" class:has-error={emailError}>
+          <label class="form-label" for="email">{t('auth.email')}</label>
+          <input
+            id="email"
+            type="email"
+            class="form-input"
+            bind:value={email}
+            placeholder={t('auth.emailPlaceholder')}
+            autocomplete="email"
+            disabled={loading}
+            @blur="validateEmail"
+          />
+          {#if emailError}
+            <span class="field-error">{emailError}</span>
+          {/if}
+        </div>
+
+        <div class="form-group" class:has-error={passwordError}>
+          <label class="form-label" for="password">{t('auth.password')}</label>
+          <PasswordInput
+            id="password"
+            value={password}
+            placeholder={t('auth.passwordPlaceholder')}
+            error={passwordError}
+            @input={e => password = e}
+          />
+          {#if passwordError}
+            <span class="field-error">{passwordError}</span>
+          {/if}
+        </div>
+
+        <button
+          type="submit"
+          class="btn btn-primary"
+          disabled={loading}
+        >
+          {#if loading}
+            <span class="btn-spinner"></span>
+            <span>{t('common.loading')}</span>
+          {:else}
+            <span>{t('auth.loginBtn')}</span>
+          {/if}
+        </button>
+      </form>
+
+      <!-- 구분선 -->
+      <div class="divider">
+        <span class="divider-text">{t('common.or')}</span>
+      </div>
+
+      <!-- OAuth GitHub 버튼 -->
+      <button
+        type="button"
+        class="btn btn-github"
+        @click="handleGithubLogin"
+        disabled={loading}
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+        </svg>
+        <span>{t('auth.githubLogin')}</span>
+      </button>
+
+      <!-- 회원가입 링크 -->
+      <p class="auth-link">
+        {t('auth.noAccount')}
+        <a href="/auth/register" class="link" @click|preventDefault="goToRegister">
+          {t('auth.goToRegister')}
+        </a>
+      </p>
+    </div>
+  </div>
+</template>
+
+<script>
+import { create_auth_store, login } from '../../stores/auth.vais'
+import { t } from '../../i18n.vais'
+U ../../components/PasswordInput
+
+# 스토어 초기화
+let authStore = create_auth_store()
+
+# 폼 상태
+let email = ''
+let password = ''
+
+# 밸리데이션 에러
+let emailError = ''
+let passwordError = ''
+
+# 서버 에러 / 전체 에러 메시지
+let errorMessage = ''
+
+# 로딩 상태
+let loading = false
+
+# 이메일 형식 검사
+F isValidEmail(value: str) -> bool {
+  let re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+  re.test(value)
+}
+
+# 이메일 필드 밸리데이션
+F validateEmail() {
+  emailError = ''
+  if str_len(email) == 0 {
+    emailError = t('auth.emailRequired')
+  } else if !isValidEmail(email) {
+    emailError = t('auth.invalidCredentials')
+  }
+}
+
+# 비밀번호 필드 밸리데이션
+F validatePassword() {
+  passwordError = ''
+  if str_len(password) == 0 {
+    passwordError = t('auth.passwordRequired')
+  } else if str_len(password) < 8 {
+    passwordError = t('auth.passwordMinLength')
+  }
+}
+
+# 폼 전체 밸리데이션
+F validateForm() -> bool {
+  validateEmail()
+  validatePassword()
+  str_len(emailError) == 0 && str_len(passwordError) == 0
+}
+
+# 로그인 제출 핸들러
+A F handleLogin() {
+  errorMessage = ''
+  if !validateForm() {
+    R
+  }
+
+  loading = true
+
+  try {
+    let result = Y login(&mut authStore, email, password)
+
+    M result {
+      Ok(_state) => {
+        # 대시보드로 리다이렉트
+        window.router.navigate('/')
+      }
+      Err(err) => {
+        errorMessage = err
+      }
+    }
+  } catch(e) {
+    errorMessage = e.message
+  } finally {
+    loading = false
+  }
+}
+
+# GitHub OAuth 로그인
+F handleGithubLogin() {
+  window.location.href = '/api/v1/auth/oauth/github'
+}
+
+# 회원가입 페이지로 이동
+F goToRegister() {
+  window.router.navigate('/auth/register')
+}
+</script>
+
+<style scoped>
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--color-bg);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 40px 36px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+}
+
+/* 헤더 */
+.card-header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.logo-text {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  letter-spacing: -0.3px;
+}
+
+.card-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin-bottom: 6px;
+  letter-spacing: -0.4px;
+}
+
+.card-subtitle {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+/* 에러 알림 */
+.alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  margin-bottom: 20px;
+}
+
+.alert-error {
+  background: var(--color-danger-muted);
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+/* 폼 */
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.form-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.input-wrapper .form-input {
+  padding-right: 42px;
+}
+
+.form-input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+}
+
+.form-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.form-group.has-error .form-input {
+  border-color: var(--color-danger);
+}
+
+.form-group.has-error .form-input:focus {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+.field-error {
+  font-size: 12px;
+  color: var(--color-danger);
+}
+
+.toggle-password {
+  position: absolute;
+  right: 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  padding: 0;
+  transition: color 0.15s;
+}
+
+.toggle-password:hover {
+  color: var(--color-text-secondary);
+}
+
+/* 버튼 */
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s, transform 0.1s;
+  width: 100%;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+  margin-top: 4px;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.btn-github {
+  background: #24292e;
+  color: #ffffff;
+  border: 1px solid #1a1e22;
+}
+
+.btn-github:hover:not(:disabled) {
+  background: #1a1e22;
+}
+
+.btn-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+/* 구분선 */
+.divider {
+  position: relative;
+  text-align: center;
+  margin: 22px 0;
+}
+
+.divider::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.divider-text {
+  position: relative;
+  padding: 0 14px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+/* 링크 */
+.auth-link {
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-top: 22px;
+}
+
+.link {
+  color: var(--color-primary);
+  font-weight: 500;
+  text-decoration: none;
+  margin-left: 4px;
+}
+
+.link:hover {
+  text-decoration: underline;
+}
+
+/* 반응형 */
+@media (max-width: 480px) {
+  .login-card {
+    padding: 28px 20px;
+    border-radius: 12px;
+  }
+
+  .card-title {
+    font-size: 20px;
+  }
+}
+</style>

@@ -1,0 +1,254 @@
+
+# ============================================================================
+# 도메인 모델
+# ============================================================================
+
+# Metric 모델
+S Metric {
+    id: i64,
+    service_id: i64,
+    metric_name: str,     # response_time, status_code, cpu, memory, error_rate
+    value: f64,
+    timestamp: i64,
+    ttl_seconds: i64,
+}
+
+# MetricAggregation 모델
+S MetricAggregation {
+    metric_name: str,
+    avg_value: f64,
+    min_value: f64,
+    max_value: f64,
+    count: i64,
+    p50: f64,
+    p95: f64,
+    p99: f64,
+}
+
+# ============================================================================
+# Collector — 메트릭 저장
+# ============================================================================
+
+# 단일 메트릭 저장
+# 반환: 새 메트릭 ID (0이면 실패)
+F record_metric(service_id: i64, metric_name: str, value: f64, ttl_seconds: i64) -> i64 {
+    now_ms := current_time_ms()
+    db_prepare("record_metric",
+        "INSERT INTO metrics (service_id, metric_name, value, timestamp, ttl_seconds) VALUES (?, ?, ?, ?, ?)")
+    params := "[]"
+    params := json_set(params, "0", i64_to_str(service_id))
+    params := json_set(params, "1", metric_name)
+    params := json_set(params, "2", f64_to_str(value))
+    params := json_set(params, "3", i64_to_str(now_ms))
+    params := json_set(params, "4", i64_to_str(ttl_seconds))
+    db_execute_prepared("record_metric", params)
+}
+
+# 여러 메트릭 한번에 저장 (JSON 배열 파싱)
+# metrics_json 형식: [{"name": "cpu", "value": 45.2}, {"name": "memory", "value": 72.1}, ...]
+# 반환: 저장된 메트릭 수
+F record_metrics_batch(service_id: i64, metrics_json: str) -> i64 {
+    now_ms := current_time_ms()
+    default_ttl := 2592000
+
+    count := mut 0
+
+    db_prepare("record_metric_batch",
+        "INSERT INTO metrics (service_id, metric_name, value, timestamp, ttl_seconds) VALUES (?, ?, ?, ?, ?)")
+
+    # 동적 루프: 항목이 없을 때까지 순회 (하드캡 없음)
+    i := mut 0
+    LW true {
+        item := json_get(metrics_json, i64_to_str(i))
+        I str_len(item) == 0 {
+            R count
+        }
+        item_name := json_get(item, "name")
+        item_val_str := json_get(item, "value")
+        I str_len(item_name) > 0 && str_len(item_val_str) > 0 {
+            p := "[]"
+            p := json_set(p, "0", i64_to_str(service_id))
+            p := json_set(p, "1", item_name)
+            p := json_set(p, "2", item_val_str)
+            p := json_set(p, "3", i64_to_str(now_ms))
+            p := json_set(p, "4", i64_to_str(default_ttl))
+            db_execute_prepared("record_metric_batch", p)
+            count = count + 1
+        }
+        i = i + 1
+    }
+
+    count
+}
+
+# ============================================================================
+# 조회
+# ============================================================================
+
+# 시간 범위 기반 메트릭 목록 조회
+# 반환: JSON array string (ORDER BY timestamp DESC)
+F get_metrics(service_id: i64, metric_name: str, from_ts: i64, to_ts: i64, limit: i64) -> str {
+    safe_metric_name := str_replace(metric_name, "'", "''")
+    name_filter := I str_len(metric_name) > 0 {
+        " AND metric_name = '" + safe_metric_name + "'"
+    } EL {
+        ""
+    }
+    limit_val := I limit <= 0 { 100 } EL { limit }
+    limit_val := I limit_val > 1000 { 1000 } EL { limit_val }
+
+    db_query(
+        "SELECT id, service_id, metric_name, value, timestamp, ttl_seconds " +
+        "FROM metrics " +
+        "WHERE service_id = " + i64_to_str(service_id) +
+        name_filter +
+        " AND timestamp >= " + i64_to_str(from_ts) +
+        " AND timestamp <= " + i64_to_str(to_ts) +
+        " ORDER BY timestamp DESC" +
+        " LIMIT " + i64_to_str(limit_val)
+    )
+}
+
+# 최신 메트릭 1건 조회
+# 반환: metric JSON or ""
+F get_latest_metric(service_id: i64, metric_name: str) -> str {
+    safe_metric_name := str_replace(metric_name, "'", "''")
+    row := db_query(
+        "SELECT id, service_id, metric_name, value, timestamp, ttl_seconds " +
+        "FROM metrics " +
+        "WHERE service_id = " + i64_to_str(service_id) +
+        " AND metric_name = '" + safe_metric_name + "'" +
+        " ORDER BY timestamp DESC LIMIT 1"
+    )
+    id_str := json_get(row, "id")
+    I str_len(id_str) == 0 {
+        ""
+    } EL {
+        metric_to_json(
+            str_to_i64(id_str),
+            str_to_i64(json_get(row, "service_id")),
+            json_get(row, "metric_name"),
+            str_to_f64(json_get(row, "value")),
+            str_to_i64(json_get(row, "timestamp"))
+        )
+    }
+}
+
+# ============================================================================
+# 집계 (SQL GROUP BY + AVG/MIN/MAX/COUNT)
+# ============================================================================
+
+# 시간 범위 기반 메트릭 집계
+# 반환: {"avg": N, "min": N, "max": N, "count": N}
+F aggregate_metrics(service_id: i64, metric_name: str, from_ts: i64, to_ts: i64) -> str {
+    safe_metric_name := str_replace(metric_name, "'", "''")
+    row := db_query(
+        "SELECT AVG(value) as avg_val, MIN(value) as min_val, MAX(value) as max_val, COUNT(*) as cnt " +
+        "FROM metrics " +
+        "WHERE service_id = " + i64_to_str(service_id) +
+        " AND metric_name = '" + safe_metric_name + "'" +
+        " AND timestamp >= " + i64_to_str(from_ts) +
+        " AND timestamp <= " + i64_to_str(to_ts)
+    )
+
+    avg_str := json_get(row, "avg_val")
+    min_str := json_get(row, "min_val")
+    max_str := json_get(row, "max_val")
+    cnt_str := json_get(row, "cnt")
+
+    avg_val := I str_len(avg_str) > 0 { str_to_f64(avg_str) } EL { 0.0 }
+    min_val := I str_len(min_str) > 0 { str_to_f64(min_str) } EL { 0.0 }
+    max_val := I str_len(max_str) > 0 { str_to_f64(max_str) } EL { 0.0 }
+    cnt_val := I str_len(cnt_str) > 0 { str_to_i64(cnt_str) } EL { 0 }
+
+    "{\"avg\":" + f64_to_str(avg_val) +
+    ",\"min\":" + f64_to_str(min_val) +
+    ",\"max\":" + f64_to_str(max_val) +
+    ",\"count\":" + i64_to_str(cnt_val) + "}"
+}
+
+# 백분위수 계산 (p50, p95, p99)
+# ORDER BY value → LIMIT/OFFSET로 근사 계산
+# percentile: 0.0 ~ 1.0 (예: 0.95 = p95)
+# 반환: 해당 백분위수 값
+F calculate_percentile(service_id: i64, metric_name: str, from_ts: i64, to_ts: i64, percentile: f64) -> f64 {
+    safe_metric_name := str_replace(metric_name, "'", "''")
+    # 전체 데이터 수 조회
+    cnt_row := db_query(
+        "SELECT COUNT(*) as cnt FROM metrics " +
+        "WHERE service_id = " + i64_to_str(service_id) +
+        " AND metric_name = '" + safe_metric_name + "'" +
+        " AND timestamp >= " + i64_to_str(from_ts) +
+        " AND timestamp <= " + i64_to_str(to_ts)
+    )
+    cnt := str_to_i64(json_get(cnt_row, "cnt"))
+
+    I cnt == 0 {
+        R 0.0
+    }
+
+    # 백분위수에 해당하는 OFFSET 계산 (0-indexed)
+    # floor((count - 1) * percentile)
+    idx_f := floor((cnt - 1) * percentile)
+    idx := str_to_i64(f64_to_str(idx_f))
+    offset_val := I idx < 0 { 0 } EL { idx }
+
+    val_row := db_query(
+        "SELECT value FROM metrics " +
+        "WHERE service_id = " + i64_to_str(service_id) +
+        " AND metric_name = '" + safe_metric_name + "'" +
+        " AND timestamp >= " + i64_to_str(from_ts) +
+        " AND timestamp <= " + i64_to_str(to_ts) +
+        " ORDER BY value ASC" +
+        " LIMIT 1 OFFSET " + i64_to_str(offset_val)
+    )
+
+    val_str := json_get(val_row, "value")
+    I str_len(val_str) == 0 {
+        0.0
+    } EL {
+        str_to_f64(val_str)
+    }
+}
+
+# ============================================================================
+# 만료 메트릭 정리
+# ============================================================================
+
+# TTL이 만료된 메트릭 삭제
+# 반환: 삭제된 행 수
+F cleanup_expired_metrics() -> i64 {
+    now_ms := current_time_ms()
+    db_execute(
+        "DELETE FROM metrics WHERE timestamp + ttl_seconds * 1000 < " + i64_to_str(now_ms)
+    )
+}
+
+# ============================================================================
+# 직렬화
+# ============================================================================
+
+# Metric JSON 직렬화
+F metric_to_json(id: i64, service_id: i64, metric_name: str, value: f64, timestamp: i64) -> str {
+    result := "{}"
+    result := json_set(result, "id", i64_to_str(id))
+    result := json_set(result, "service_id", i64_to_str(service_id))
+    result := json_set(result, "metric_name", metric_name)
+    result := json_set(result, "value", f64_to_str(value))
+    result := json_set(result, "timestamp", i64_to_str(timestamp))
+    result
+}
+
+# MetricAggregation JSON 직렬화
+F aggregation_to_json(metric_name: str, avg: f64, min: f64, max: f64, count: i64, p50: f64, p95: f64, p99: f64) -> str {
+    result := "{}"
+    result := json_set(result, "metric_name", metric_name)
+    result := json_set(result, "avg_value", f64_to_str(avg))
+    result := json_set(result, "min_value", f64_to_str(min))
+    result := json_set(result, "max_value", f64_to_str(max))
+    result := json_set(result, "count", i64_to_str(count))
+    result := json_set(result, "p50", f64_to_str(p50))
+    result := json_set(result, "p95", f64_to_str(p95))
+    result := json_set(result, "p99", f64_to_str(p99))
+    result
+}

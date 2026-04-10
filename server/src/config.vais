@@ -1,0 +1,88 @@
+
+S ServerConfig {
+    host: str,
+    port: i64,
+    db_path: str,
+    jwt_secret: str,
+    jwt_issuer: str,
+    jwt_access_ttl: i64,       # seconds, default 3600
+    jwt_refresh_ttl: i64,      # seconds, default 604800
+    oauth_github_client_id: str,
+    oauth_github_client_secret: str,
+    oauth_github_redirect_uri: str,
+    log_level: str,             # debug/info/warn/error
+    max_connections: i64,
+}
+
+X ServerConfig {
+    F default() -> ServerConfig {
+        ServerConfig {
+            host: "127.0.0.1",
+            port: 8080,
+            db_path: "vais_monitor.db",
+            jwt_secret: "change_me_in_production",
+            jwt_issuer: "vais-monitor",
+            jwt_access_ttl: 3600,
+            jwt_refresh_ttl: 604800,
+            oauth_github_client_id: "",
+            oauth_github_client_secret: "",
+            oauth_github_redirect_uri: "http://localhost:8080/api/v1/auth/oauth/github/callback",
+            log_level: "info",
+            max_connections: 100,
+        }
+    }
+
+    F from_env() -> ServerConfig {
+        host := env_get("VAIS_HOST")
+        host_val := I str_len(host) > 0 { host } EL { "127.0.0.1" }
+
+        port_str := env_get("VAIS_PORT")
+        port_val := I str_len(port_str) > 0 { str_to_i64(port_str) } EL { 8080 }
+
+        db_path := env_get("VAIS_DB_PATH")
+        db_path_val := I str_len(db_path) > 0 { db_path } EL { "vais_monitor.db" }
+
+        jwt_secret := env_get("VAIS_JWT_SECRET")
+        I str_len(jwt_secret) == 0 {
+            println("[WARN] VAIS_JWT_SECRET not set — generating random secret (tokens will not survive restart)")
+            jwt_secret = generate_uuid() + generate_uuid()
+        }
+        jwt_secret_val := jwt_secret
+
+        jwt_issuer := env_get("VAIS_JWT_ISSUER")
+        jwt_issuer_val := I str_len(jwt_issuer) > 0 { jwt_issuer } EL { "vais-monitor" }
+
+        jwt_access_ttl_str := env_get("VAIS_JWT_ACCESS_TTL")
+        jwt_access_ttl_val := I str_len(jwt_access_ttl_str) > 0 { str_to_i64(jwt_access_ttl_str) } EL { 3600 }
+
+        jwt_refresh_ttl_str := env_get("VAIS_JWT_REFRESH_TTL")
+        jwt_refresh_ttl_val := I str_len(jwt_refresh_ttl_str) > 0 { str_to_i64(jwt_refresh_ttl_str) } EL { 604800 }
+
+        github_client_id := env_get("VAIS_GITHUB_CLIENT_ID")
+        github_client_secret := env_get("VAIS_GITHUB_CLIENT_SECRET")
+
+        github_redirect := env_get("VAIS_GITHUB_REDIRECT_URI")
+        github_redirect_val := I str_len(github_redirect) > 0 { github_redirect } EL { "http://localhost:8080/api/v1/auth/oauth/github/callback" }
+
+        log_level := env_get("VAIS_LOG_LEVEL")
+        log_level_val := I str_len(log_level) > 0 { log_level } EL { "info" }
+
+        max_conn_str := env_get("VAIS_MAX_CONNECTIONS")
+        max_conn_val := I str_len(max_conn_str) > 0 { str_to_i64(max_conn_str) } EL { 100 }
+
+        ServerConfig {
+            host: host_val,
+            port: port_val,
+            db_path: db_path_val,
+            jwt_secret: jwt_secret_val,
+            jwt_issuer: jwt_issuer_val,
+            jwt_access_ttl: jwt_access_ttl_val,
+            jwt_refresh_ttl: jwt_refresh_ttl_val,
+            oauth_github_client_id: github_client_id,
+            oauth_github_client_secret: github_client_secret,
+            oauth_github_redirect_uri: github_redirect_val,
+            log_level: log_level_val,
+            max_connections: max_conn_val,
+        }
+    }
+}

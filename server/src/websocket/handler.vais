@@ -1,0 +1,462 @@
+
+# ============================================================================
+# WebSocket 핸들러 — 실시간 클라이언트 연결/브로드캐스트 관리
+# 경로:
+#   WS /ws/metrics  — 실시간 메트릭 스트리밍
+#   WS /ws/alerts   — 실시간 알림 이벤트
+#   WS /ws/status   — 서비스 상태 변경 알림
+# ============================================================================
+
+# ============================================================================
+# WebSocket 이벤트 타입 상수
+# ============================================================================
+
+# 이벤트/채널 상수는 getter 함수로 제공 (cross-module codegen 이슈 회피)
+F ws_event_metric() -> str { "metric" }
+F ws_event_healthcheck() -> str { "healthcheck" }
+F ws_event_incident() -> str { "incident" }
+F ws_event_alert() -> str { "alert" }
+F ws_event_ping() -> str { "ping" }
+F ws_event_pong() -> str { "pong" }
+F ws_event_subscribe() -> str { "subscribe" }
+F ws_event_unsubscribe() -> str { "unsubscribe" }
+F ws_event_connected() -> str { "connected" }
+F ws_event_error() -> str { "error" }
+F ws_channel_metrics() -> str { "metrics" }
+F ws_channel_alerts() -> str { "alerts" }
+F ws_channel_status() -> str { "status" }
+F ws_max_clients() -> i64 { 100 }
+
+# ============================================================================
+# 클라이언트 세션 관리 (전역 레지스트리)
+# 실제 WebSocket 런타임은 ws_* 외부 함수로 추상화
+# ============================================================================
+
+# 현재 연결된 클라이언트 수 (전역)
+G ws_client_count: i64 = 0
+
+# 마지막 브로드캐스트 타임스탬프 (채널별)
+G ws_last_broadcast_metrics: i64 = 0
+G ws_last_broadcast_alerts: i64  = 0
+G ws_last_broadcast_status: i64  = 0
+
+# ============================================================================
+# 메시지 빌더 헬퍼
+# ============================================================================
+
+# WebSocket 이벤트 JSON 메시지 생성
+# { "event": "...", "channel": "...", "ts": N, "data": { ... } }
+F build_ws_message(event: str, channel: str, data: str) -> str {
+    ts := i64_to_str(current_time_ms())
+    msg := "{}"
+    msg := json_set(msg, "event", event)
+    msg := json_set(msg, "channel", channel)
+    msg := json_set(msg, "ts", ts)
+    msg := json_set(msg, "data", data)
+    msg
+}
+
+# connected 메시지 생성
+F build_connected_message(client_id: str) -> str {
+    data := "{}"
+    data := json_set(data, "client_id", client_id)
+    data := json_set(data, "channels", "[\"metrics\",\"alerts\",\"status\"]")
+    build_ws_message(ws_event_connected(), "", data)
+}
+
+# pong 메시지 생성
+F build_pong_message() -> str {
+    data := "{}"
+    data := json_set(data, "ts", i64_to_str(current_time_ms()))
+    build_ws_message(ws_event_pong(), "", data)
+}
+
+# 에러 메시지 생성
+F build_error_message(code: str, reason: str) -> str {
+    data := "{}"
+    data := json_set(data, "code", code)
+    data := json_set(data, "reason", reason)
+    build_ws_message(ws_event_error(), "", data)
+}
+
+# ============================================================================
+# 실시간 이벤트 페이로드 빌더
+# ============================================================================
+
+# 메트릭 이벤트 데이터 생성
+# service_id, metric_name, value, timestamp
+F build_metric_event(service_id: i64, metric_name: str, value: f64, timestamp: i64) -> str {
+    data := "{}"
+    data := json_set(data, "service_id", i64_to_str(service_id))
+    data := json_set(data, "metric_name", metric_name)
+    data := json_set(data, "value", f64_to_str(value))
+    data := json_set(data, "timestamp", i64_to_str(timestamp))
+    build_ws_message(ws_event_metric(), ws_channel_metrics(), data)
+}
+
+# 헬스체크 결과 이벤트 데이터 생성
+# service_id, service_name, status, response_time_ms
+F build_healthcheck_event(service_id: i64, service_name: str, status: str, response_time_ms: i64) -> str {
+    data := "{}"
+    data := json_set(data, "service_id", i64_to_str(service_id))
+    data := json_set(data, "service_name", service_name)
+    data := json_set(data, "status", status)
+    data := json_set(data, "response_time_ms", i64_to_str(response_time_ms))
+    data := json_set(data, "checked_at", i64_to_str(current_time_ms()))
+    build_ws_message(ws_event_healthcheck(), ws_channel_status(), data)
+}
+
+# 인시던트 상태 변경 이벤트 데이터 생성
+# incident_id, title, severity, status, service_id
+F build_incident_event(incident_id: i64, title: str, severity: str, status: str, service_id: i64) -> str {
+    data := "{}"
+    data := json_set(data, "incident_id", i64_to_str(incident_id))
+    data := json_set(data, "title", title)
+    data := json_set(data, "severity", severity)
+    data := json_set(data, "status", status)
+    data := json_set(data, "service_id", i64_to_str(service_id))
+    data := json_set(data, "occurred_at", i64_to_str(current_time_ms()))
+    build_ws_message(ws_event_incident(), ws_channel_alerts(), data)
+}
+
+# 알림 트리거 이벤트 데이터 생성
+# alert_rule_id, name, severity, condition_metric, actual_value
+F build_alert_event(alert_rule_id: i64, name: str, severity: str, condition_metric: str, actual_value: f64) -> str {
+    data := "{}"
+    data := json_set(data, "alert_rule_id", i64_to_str(alert_rule_id))
+    data := json_set(data, "name", name)
+    data := json_set(data, "severity", severity)
+    data := json_set(data, "condition_metric", condition_metric)
+    data := json_set(data, "actual_value", f64_to_str(actual_value))
+    data := json_set(data, "triggered_at", i64_to_str(current_time_ms()))
+    build_ws_message(ws_event_alert(), ws_channel_alerts(), data)
+}
+
+# ============================================================================
+# WebSocket 연결 핸들러
+# ============================================================================
+
+# 신규 WebSocket 연결 처리
+# client_id: 연결마다 고유한 식별자 (UUID)
+# channel: 구독 채널 (metrics/alerts/status)
+F handle_ws_connect(client_id: str, channel: str) -> str {
+    # 최대 연결 수 체크
+    I ws_client_count >= ws_max_clients() {
+        R build_error_message("MAX_CLIENTS", "Too many connections")
+    }
+
+    # 클라이언트 등록
+    ws_register_client(client_id, channel)
+    ws_client_count = ws_client_count + 1
+
+    ts := i64_to_str(current_time_ms())
+    println("[ws] Client connected: " + client_id + " channel=" + channel + " ts=" + ts)
+
+    # connected 메시지 반환
+    build_connected_message(client_id)
+}
+
+# WebSocket 연결 종료 처리
+F handle_ws_disconnect(client_id: str) {
+    ws_unregister_client(client_id)
+
+    I ws_client_count > 0 {
+        ws_client_count = ws_client_count - 1
+    }
+
+    ts := i64_to_str(current_time_ms())
+    println("[ws] Client disconnected: " + client_id + " ts=" + ts)
+}
+
+# ============================================================================
+# WebSocket 메시지 라우팅
+# ============================================================================
+
+# 클라이언트로부터 메시지 수신 처리
+# msg_json: { "event": "...", "data": { ... } }
+# 반환: 응답 메시지 JSON (없으면 "")
+F handle_ws_message(client_id: str, msg_json: str) -> str {
+    event := json_get(msg_json, "event")
+
+    # ping → pong 응답
+    I event == ws_event_ping() {
+        R build_pong_message()
+    }
+
+    # subscribe — 채널 구독 추가
+    I event == ws_event_subscribe() {
+        channel := json_get(json_get(msg_json, "data"), "channel")
+        I str_len(channel) > 0 {
+            ws_add_subscription(client_id, channel)
+            resp_data := "{}"
+            resp_data := json_set(resp_data, "channel", channel)
+            resp_data := json_set(resp_data, "subscribed", "true")
+            R build_ws_message("subscribed", channel, resp_data)
+        }
+        R build_error_message("BAD_REQUEST", "channel is required")
+    }
+
+    # unsubscribe — 채널 구독 해제
+    I event == ws_event_unsubscribe() {
+        channel := json_get(json_get(msg_json, "data"), "channel")
+        I str_len(channel) > 0 {
+            ws_remove_subscription(client_id, channel)
+            resp_data := "{}"
+            resp_data := json_set(resp_data, "channel", channel)
+            resp_data := json_set(resp_data, "subscribed", "false")
+            R build_ws_message("unsubscribed", channel, resp_data)
+        }
+        R build_error_message("BAD_REQUEST", "channel is required")
+    }
+
+    # 알 수 없는 이벤트
+    build_error_message("UNKNOWN_EVENT", "Unknown event type: " + event)
+}
+
+# ============================================================================
+# 브로드캐스트 함수
+# ============================================================================
+
+# 특정 채널을 구독 중인 모든 클라이언트에 메시지 브로드캐스트
+F broadcast_to_channel(channel: str, message: str) {
+    ts := current_time_ms()
+
+    I channel == ws_channel_metrics() {
+        ws_last_broadcast_metrics = ts
+    } EL I channel == ws_channel_alerts() {
+        ws_last_broadcast_alerts = ts
+    } EL I channel == ws_channel_status() {
+        ws_last_broadcast_status = ts
+    }
+
+    # 런타임 브로드캐스트 함수 호출
+    ws_broadcast(channel, message)
+
+    println("[ws] Broadcast to channel=" + channel +
+        " clients=" + i64_to_str(ws_client_count) +
+        " ts=" + i64_to_str(ts))
+}
+
+# 메트릭 이벤트 브로드캐스트
+F broadcast_metric(service_id: i64, metric_name: str, value: f64, timestamp: i64) {
+    msg := build_metric_event(service_id, metric_name, value, timestamp)
+    broadcast_to_channel(ws_channel_metrics(), msg)
+}
+
+# 헬스체크 결과 브로드캐스트
+F broadcast_healthcheck(service_id: i64, service_name: str, status: str, response_time_ms: i64) {
+    msg := build_healthcheck_event(service_id, service_name, status, response_time_ms)
+    broadcast_to_channel(ws_channel_status(), msg)
+    # 상태 변경은 alerts 채널에도 전송
+    broadcast_to_channel(ws_channel_alerts(), msg)
+}
+
+# 인시던트 상태 변경 브로드캐스트
+F broadcast_incident(incident_id: i64, title: str, severity: str, status: str, service_id: i64) {
+    msg := build_incident_event(incident_id, title, severity, status, service_id)
+    broadcast_to_channel(ws_channel_alerts(), msg)
+}
+
+# 알림 트리거 브로드캐스트
+F broadcast_alert(alert_rule_id: i64, name: str, severity: str, condition_metric: str, actual_value: f64) {
+    msg := build_alert_event(alert_rule_id, name, severity, condition_metric, actual_value)
+    broadcast_to_channel(ws_channel_alerts(), msg)
+}
+
+# ============================================================================
+# 대시보드 스냅샷 브로드캐스트
+# 클라이언트 초기 연결 시 또는 주기적 갱신에 사용
+# ============================================================================
+
+# 서비스 요약 통계 수집 후 브로드캐스트
+F broadcast_dashboard_snapshot() {
+    # 전체/정상/장애/저하 서비스 수 집계
+    total_services := count_services(0, "", "")
+    healthy_services := count_services(0, "up", "")
+    down_services := count_services(0, "down", "")
+    degraded_services := count_services(0, "degraded", "")
+
+    # 활성 인시던트 수 (open + acknowledged)
+    open_incidents := count_incidents(0, "open")
+    ack_incidents := count_incidents(0, "acknowledged")
+    active_incidents := open_incidents + ack_incidents
+
+    # 활성 알림 룰 수
+    total_alerts := count_alerts(0)
+
+    # 스냅샷 데이터 빌드
+    data := "{}"
+    data := json_set(data, "total_services", i64_to_str(total_services))
+    data := json_set(data, "healthy_services", i64_to_str(healthy_services))
+    data := json_set(data, "down_services", i64_to_str(down_services))
+    data := json_set(data, "degraded_services", i64_to_str(degraded_services))
+    data := json_set(data, "active_incidents", i64_to_str(active_incidents))
+    data := json_set(data, "total_alerts", i64_to_str(total_alerts))
+    data := json_set(data, "snapshot_ts", i64_to_str(current_time_ms()))
+
+    msg := build_ws_message("dashboard_snapshot", ws_channel_status(), data)
+
+    # 모든 채널에 스냅샷 전송
+    broadcast_to_channel(ws_channel_status(), msg)
+}
+
+# ============================================================================
+# HTTP 업그레이드 진입점 (main.vais의 dispatch_handler에서 호출)
+# ============================================================================
+
+# WS /ws/metrics, /ws/alerts, /ws/status 진입
+# method/path/headers/body → WebSocket Upgrade 응답 반환
+F handle_websocket(method: str, path: str, headers: str, body: str) -> str {
+    # JWT 인증 검증
+    jwt_secret := env_get("VAIS_JWT_SECRET")
+    I str_len(jwt_secret) == 0 {
+        jwt_secret = "change_me_in_production"
+    }
+    auth_prefix := "Authorization: Bearer "
+    ws_token := ""
+    header_lines := str_split(headers, "\n")
+    hi := 0
+    LW hi < str_split_count(header_lines) {
+        line := str_trim(json_get(header_lines, i64_to_str(hi)))
+        I str_starts_with(line, auth_prefix) {
+            prefix_len := str_len(auth_prefix)
+            line_len := str_len(line)
+            ws_token = str_slice(line, prefix_len, line_len)
+        }
+        hi = hi + 1
+    }
+    I str_len(ws_token) == 0 {
+        R error_response_ws(401, "Unauthorized: missing token")
+    }
+    ws_claims := jwt_decode(ws_token, jwt_secret)
+    I str_len(ws_claims) == 0 {
+        R error_response_ws(401, "Unauthorized: invalid or expired token")
+    }
+    ws_user_id := json_get(ws_claims, "sub")
+    I str_len(ws_user_id) == 0 {
+        R error_response_ws(401, "Unauthorized: token missing subject claim")
+    }
+
+    # WebSocket Upgrade 헤더 확인
+    upgrade_header := json_get(headers, "Upgrade")
+    is_upgrade := upgrade_header == "websocket"
+
+    # 채널 결정
+    channel := ""
+    I str_contains(path, "/ws/metrics") {
+        channel = ws_channel_metrics()
+    } EL I str_contains(path, "/ws/alerts") {
+        channel = ws_channel_alerts()
+    } EL I str_contains(path, "/ws/status") {
+        channel = ws_channel_status()
+    }
+
+    I str_len(channel) == 0 {
+        R error_response_ws(404, "WebSocket route not found")
+    }
+
+    # HTTP Upgrade 요청이 아니면 채널 상태 정보만 반환 (헬스체크용)
+    I !is_upgrade {
+        R handle_ws_info(channel)
+    }
+
+    # 클라이언트 ID 생성
+    client_id := generate_uuid()
+
+    # 연결 처리 및 초기 메시지
+    connect_msg := handle_ws_connect(client_id, channel)
+
+    # WebSocket Upgrade 응답
+    response := ws_upgrade_response(client_id, channel, connect_msg)
+    R response
+}
+
+# 채널 상태 정보 반환 (비-WebSocket 요청용)
+F handle_ws_info(channel: str) -> str {
+    data := "{}"
+    data := json_set(data, "channel", channel)
+    data := json_set(data, "clients", i64_to_str(ws_client_count))
+
+    last_ts := I channel == ws_channel_metrics() {
+        ws_last_broadcast_metrics
+    } EL I channel == ws_channel_alerts() {
+        ws_last_broadcast_alerts
+    } EL {
+        ws_last_broadcast_status
+    }
+
+    data := json_set(data, "last_broadcast_ts", i64_to_str(last_ts))
+    body := "{\"ok\": true, \"data\": " + data + "}"
+    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n" + body
+}
+
+# ============================================================================
+# WebSocket 런타임 외부 함수 (ws_* — 런타임이 제공)
+# ============================================================================
+
+# 클라이언트 등록
+X F ws_register_client(client_id: str, channel: str)
+
+# 클라이언트 제거
+X F ws_unregister_client(client_id: str)
+
+# 채널 구독 추가
+X F ws_add_subscription(client_id: str, channel: str)
+
+# 채널 구독 해제
+X F ws_remove_subscription(client_id: str, channel: str)
+
+# 채널 브로드캐스트
+X F ws_broadcast(channel: str, message: str)
+
+# 특정 클라이언트에 전송
+X F ws_send(client_id: str, message: str)
+
+# WebSocket Upgrade 응답 생성
+X F ws_upgrade_response(client_id: str, channel: str, initial_msg: str) -> str
+
+# ============================================================================
+# 내부 헬퍼
+# ============================================================================
+
+F error_response_ws(status: i64, message: str) -> str {
+    status_text := I status == 404 { "404 Not Found" }
+        E I status == 400 { "400 Bad Request" }
+        E { "500 Internal Server Error" }
+    body := "{\"error\": \"" + message + "\"}"
+    "HTTP/1.1 " + status_text + "\r\nContent-Type: application/json\r\n\r\n" + body
+}
+
+# ============================================================================
+# 주기적 브로드캐스트 워커
+# ============================================================================
+
+# 브로드캐스트 워커 실행 플래그
+G ws_broadcast_running: bool = true
+
+# 주기적 대시보드 스냅샷 브로드캐스트 워커
+# main.vais에서 spawn으로 호출
+A F start_ws_broadcast_worker() {
+    println("[ws_broadcast] Worker started")
+
+    LW true {
+        I ws_broadcast_running == false {
+            println("[ws_broadcast] Worker stopped")
+            R
+        }
+
+        # 연결된 클라이언트가 있을 때만 브로드캐스트
+        I ws_client_count > 0 {
+            broadcast_dashboard_snapshot()
+        }
+
+        # 10초마다 스냅샷 전송
+        sleep_ms(10000).await
+    }
+}
+
+# 워커 중지 (graceful shutdown)
+F stop_ws_broadcast_worker() {
+    ws_broadcast_running = false
+    println("[ws_broadcast] Worker stopping")
+}

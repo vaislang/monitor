@@ -1,0 +1,75 @@
+
+F handle_admin(method: str, path: str, headers: str, body: str) -> str {
+    jwt_secret := env_get("VAIS_JWT_SECRET")
+    I str_len(jwt_secret) == 0 {
+        jwt_secret = "change_me_in_production"
+    }
+    auth_prefix := "Authorization: Bearer "
+    token := ""
+    header_lines := str_split(headers, "\n")
+    i := 0
+    LW i < str_split_count(header_lines) {
+        line := str_trim(json_get(header_lines, i64_to_str(i)))
+        I str_starts_with(line, auth_prefix) {
+            prefix_len := str_len(auth_prefix)
+            line_len := str_len(line)
+            token = str_slice(line, prefix_len, line_len)
+        }
+        i = i + 1
+    }
+    claims := jwt_decode(token, jwt_secret)
+    role := json_get(claims, "role")
+    I role != "admin" {
+        R error_response(403, "Forbidden: admin role required")
+    }
+
+    I method == "GET" && str_contains(path, "/admin/stats") {
+        user_cnt_row := db_query("SELECT COUNT(*) as cnt FROM users")
+        user_cnt := str_to_i64(json_get(user_cnt_row, "cnt"))
+        svc_cnt_row := db_query("SELECT COUNT(*) as cnt FROM services")
+        svc_cnt := str_to_i64(json_get(svc_cnt_row, "cnt"))
+        metric_cnt_row := db_query("SELECT COUNT(*) as cnt FROM metrics")
+        metric_cnt := str_to_i64(json_get(metric_cnt_row, "cnt"))
+        log_cnt_row := db_query("SELECT COUNT(*) as cnt FROM logs")
+        log_cnt := str_to_i64(json_get(log_cnt_row, "cnt"))
+        incident_cnt_row := db_query("SELECT COUNT(*) as cnt FROM incidents")
+        incident_cnt := str_to_i64(json_get(incident_cnt_row, "cnt"))
+        alert_cnt_row := db_query("SELECT COUNT(*) as cnt FROM alert_rules")
+        alert_cnt := str_to_i64(json_get(alert_cnt_row, "cnt"))
+        resp_body := "{\"users\":" + i64_to_str(user_cnt) +
+            ",\"services\":" + i64_to_str(svc_cnt) +
+            ",\"metrics\":" + i64_to_str(metric_cnt) +
+            ",\"logs\":" + i64_to_str(log_cnt) +
+            ",\"incidents\":" + i64_to_str(incident_cnt) +
+            ",\"alert_rules\":" + i64_to_str(alert_cnt) +
+            ",\"server_time_ms\":" + i64_to_str(current_time_ms()) + "}"
+        R json_response(200, resp_body)
+    }
+    I method == "POST" && str_contains(path, "/admin/vacuum") {
+        db_execute("VACUUM")
+        R json_response(200, "{\"message\":\"Vacuum completed successfully\"}")
+    }
+    I method == "GET" && str_contains(path, "/admin/audit-logs") {
+        path_parts := str_split(path, "?")
+        query_params := json_get(path_parts, "1")
+        limit_str := get_query_param(query_params, "limit")
+        limit_val := 50
+        I str_len(limit_str) > 0 { limit_val = str_to_i64(limit_str) }
+        I limit_val < 1 { limit_val = 50 }
+        I limit_val > 500 { limit_val = 500 }
+        logs_json := db_query(
+            "SELECT id, user_id, action, resource_type, resource_id, details, ip_address, timestamp " +
+            "FROM audit_logs ORDER BY timestamp DESC LIMIT " + i64_to_str(limit_val)
+        )
+        total_row := db_query("SELECT COUNT(*) as cnt FROM audit_logs")
+        total := str_to_i64(json_get(total_row, "cnt"))
+        resp_body := "{\"audit_logs\":" + logs_json + ",\"total\":" + i64_to_str(total) + "}"
+        R json_response(200, resp_body)
+    }
+    I method == "POST" && str_contains(path, "/admin/backup") {
+        now_ms := current_time_ms()
+        resp_body := "{\"message\":\"Backup initiated\",\"backup_ts\":" + i64_to_str(now_ms) + "}"
+        R json_response(200, resp_body)
+    }
+    error_response(404, "Admin route not found")
+}

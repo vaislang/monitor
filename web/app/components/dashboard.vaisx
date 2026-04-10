@@ -1,0 +1,1253 @@
+<template>
+  <div class="dashboard">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <div class="header-text">
+        <h2 class="page-title">{t('dashboard.title')}</h2>
+        <p class="page-subtitle">{t('dashboard.subtitle')}</p>
+      </div>
+      <div class="header-actions">
+        <!-- 실시간 연결 상태 표시 -->
+        <div class="ws-status" class:connected={wsConnected} class:error={wsError}>
+          <span class="ws-dot"></span>
+          <span class="ws-label">
+            {#if wsConnected}
+              {t('dashboard.realtimeConnected')}
+            {:else if wsError}
+              {t('dashboard.realtimeError')}
+            {:else}
+              {t('dashboard.realtimeConnecting')}
+            {/if}
+          </span>
+        </div>
+        <button class="btn-refresh" @click={handleRefresh} title={t('common.refresh')}>
+          <span class="refresh-icon" class:spinning={isLoading}>&#8635;</span>
+          {t('common.refresh')}
+        </button>
+      </div>
+    </div>
+
+    <!-- 요약 카드 그리드 -->
+    <div class="summary-grid">
+      <!-- 전체 서비스 수 -->
+      <div class="summary-card card-total">
+        <div class="card-icon">◈</div>
+        <div class="card-content">
+          <span class="card-label">{t('dashboard.servicesOverview')}</span>
+          <span class="card-value">{stats.total_services}</span>
+        </div>
+        <a href="/services" class="card-link" @click|preventDefault={e => router.navigate('/services')}>
+          {t('common.detail')} →
+        </a>
+      </div>
+
+      <!-- 정상 서비스 -->
+      <div class="summary-card card-healthy">
+        <div class="card-icon card-icon--success">◉</div>
+        <div class="card-content">
+          <span class="card-label">{t('dashboard.healthyServices')}</span>
+          <span class="card-value card-value--success">{stats.healthy_services}</span>
+        </div>
+        <div class="card-bar">
+          <div
+            class="bar-fill bar-fill--success"
+            style="width: {healthyPct}%"
+          ></div>
+        </div>
+      </div>
+
+      <!-- 장애 서비스 -->
+      <div class="summary-card card-down">
+        <div class="card-icon card-icon--danger">⛔</div>
+        <div class="card-content">
+          <span class="card-label">{t('dashboard.downServices')}</span>
+          <span class="card-value card-value--danger">{stats.down_services}</span>
+        </div>
+        <div class="card-bar">
+          <div
+            class="bar-fill bar-fill--danger"
+            style="width: {downPct}%"
+          ></div>
+        </div>
+      </div>
+
+      <!-- 성능 저하 서비스 -->
+      <div class="summary-card card-degraded">
+        <div class="card-icon card-icon--warning">⚠</div>
+        <div class="card-content">
+          <span class="card-label">{t('dashboard.degradedServices')}</span>
+          <span class="card-value card-value--warning">{stats.degraded_services}</span>
+        </div>
+        <div class="card-bar">
+          <div
+            class="bar-fill bar-fill--warning"
+            style="width: {degradedPct}%"
+          ></div>
+        </div>
+      </div>
+
+      <!-- 활성 인시던트 -->
+      <div class="summary-card card-incidents">
+        <div class="card-icon card-icon--info">⚡</div>
+        <div class="card-content">
+          <span class="card-label">{t('dashboard.openIncidents')}</span>
+          <span class="card-value" class:card-value--danger={stats.active_incidents > 0}>
+            {stats.active_incidents}
+          </span>
+        </div>
+        <a href="/incidents" class="card-link" @click|preventDefault={e => router.navigate('/incidents')}>
+          {t('common.detail')} →
+        </a>
+      </div>
+
+      <!-- 활성 알림 -->
+      <div class="summary-card card-alerts">
+        <div class="card-icon card-icon--primary">🔔</div>
+        <div class="card-content">
+          <span class="card-label">{t('dashboard.activeAlerts')}</span>
+          <span class="card-value">{stats.total_alerts}</span>
+        </div>
+        <a href="/alerts" class="card-link" @click|preventDefault={e => router.navigate('/alerts')}>
+          {t('common.detail')} →
+        </a>
+      </div>
+    </div>
+
+    <!-- 하단 2단 레이아웃 -->
+    <div class="dashboard-body">
+      <!-- 왼쪽: 실시간 이벤트 피드 -->
+      <section class="panel panel-feed">
+        <div class="panel-header">
+          <h3 class="panel-title">{t('dashboard.systemHealth')}</h3>
+          {#if recentEvents.length > 0}
+            <span class="event-count-badge">{recentEvents.length}</span>
+          {/if}
+        </div>
+        <div class="event-list">
+          {#if recentEvents.length === 0}
+            <div class="empty-state">
+              <span class="empty-icon">✓</span>
+              <span>{t('dashboard.noRecentEvents')}</span>
+            </div>
+          {:else}
+            {#each recentEvents as ev}
+              <div class="event-item" class:event-item--danger={ev.type === 'incident' || ev.status === 'down'}
+                   class:event-item--warning={ev.status === 'degraded'}
+                   class:event-item--success={ev.status === 'up' || ev.status === 'resolved'}
+                   class:event-item--info={ev.type === 'metric'}>
+                <div class="event-dot"></div>
+                <div class="event-body">
+                  <span class="event-label">{ev.label}</span>
+                  <span class="event-meta">{ev.service_name} · {ev.time_ago}</span>
+                </div>
+                <span class="event-badge event-badge--{ev.severity || ev.type}">{ev.badge}</span>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </section>
+
+      <!-- 오른쪽: 메트릭 차트 영역 + 최근 인시던트 -->
+      <div class="panel-right">
+        <!-- 메트릭 차트 영역 -->
+        <section class="panel panel-metrics">
+          <div class="panel-header">
+            <h3 class="panel-title">{t('dashboard.recentLogs')}</h3>
+            <div class="chart-controls">
+              <button
+                class="chart-tab"
+                class:active={selectedMetric === 'response_time'}
+                @click={e => handleSelectMetric('response_time')}
+              >
+                Response Time
+              </button>
+              <button
+                class="chart-tab"
+                class:active={selectedMetric === 'error_rate'}
+                @click={e => handleSelectMetric('error_rate')}
+              >
+                Error Rate
+              </button>
+              <button
+                class="chart-tab"
+                class:active={selectedMetric === 'cpu'}
+                @click={e => handleSelectMetric('cpu')}
+              >
+                CPU
+              </button>
+            </div>
+          </div>
+
+          <!-- 간이 차트 (SVG 바 차트) -->
+          <div class="chart-area">
+            {#if metricPoints.length === 0}
+              <div class="chart-empty">
+                <span>{t('common.noData')}</span>
+              </div>
+            {:else}
+              <div class="bar-chart">
+                {#each metricPoints as pt}
+                  <div class="bar-col">
+                    <div
+                      class="bar-segment"
+                      style="height: {pt.pct}%"
+                      title={pt.label}
+                      class:bar-segment--warn={pt.value > 80}
+                      class:bar-segment--danger={pt.value > 95}
+                    ></div>
+                    <span class="bar-ts">{pt.ts_label}</span>
+                  </div>
+                {/each}
+              </div>
+              <div class="chart-legend">
+                <span class="legend-item">
+                  <span class="legend-dot legend-dot--primary"></span>
+                  {selectedMetric}
+                </span>
+                <span class="legend-latest">
+                  {t('dashboard.latest')}: {latestMetricValue}
+                </span>
+              </div>
+            {/if}
+          </div>
+        </section>
+
+        <!-- 최근 인시던트 테이블 -->
+        <section class="panel panel-incidents">
+          <div class="panel-header">
+            <h3 class="panel-title">{t('dashboard.openIncidents')}</h3>
+            <a href="/incidents" class="panel-link" @click|preventDefault={e => router.navigate('/incidents')}>
+              {t('common.detail')} →
+            </a>
+          </div>
+
+          {#if recentIncidents.length === 0}
+            <div class="empty-state">
+              <span class="empty-icon">✓</span>
+              <span>{t('incidents.noIncidents')}</span>
+            </div>
+          {:else}
+            <div class="incident-list">
+              {#each recentIncidents as inc}
+                <div class="incident-row" @click={e => router.navigate('/incidents/' + inc.id)}>
+                  <div class="severity-badge severity-badge--{inc.severity}">
+                    {inc.severity.toUpperCase()}
+                  </div>
+                  <div class="incident-info">
+                    <span class="incident-title">{inc.title}</span>
+                    <span class="incident-meta">{inc.service_name} · {inc.time_ago}</span>
+                  </div>
+                  <div class="status-chip status-chip--{inc.status}">
+                    {inc.status}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import { t } from '../i18n.vais'
+import { appStore } from '../stores/app.vais'
+
+# ============================================================================
+# 대시보드 상태
+# ============================================================================
+
+# 통계 요약
+let stats = {
+  total_services: 0,
+  healthy_services: 0,
+  down_services: 0,
+  degraded_services: 0,
+  active_incidents: 0,
+  total_alerts: 0,
+}
+
+# UI 상태
+let isLoading = false
+let wsConnected = false
+let wsError = false
+let statsError = ''
+let incidentsError = ''
+
+# WebSocket ping interval
+let wsPingInterval = null
+
+# 실시간 이벤트 피드 (최대 20건)
+let recentEvents = []
+
+# 최근 인시던트 (최대 5건)
+let recentIncidents = []
+
+# 메트릭 차트
+let selectedMetric = 'response_time'
+let metricPoints = []
+let latestMetricValue = '—'
+
+# WebSocket 인스턴스
+let ws = null
+
+# ============================================================================
+# 파생 계산 (반응형)
+# ============================================================================
+
+$: healthyPct = stats.total_services > 0
+  ? Math.round((stats.healthy_services / stats.total_services) * 100)
+  : 0
+
+$: downPct = stats.total_services > 0
+  ? Math.round((stats.down_services / stats.total_services) * 100)
+  : 0
+
+$: degradedPct = stats.total_services > 0
+  ? Math.round((stats.degraded_services / stats.total_services) * 100)
+  : 0
+
+# ============================================================================
+# 초기화 / 생명주기
+# ============================================================================
+
+# 컴포넌트 마운트 시 데이터 로드 + WebSocket 연결
+A F onMount() {
+  await loadDashboardData()
+  connectWebSocket()
+}
+
+# 컴포넌트 언마운트 시 WebSocket 해제
+F onDestroy() {
+  if wsPingInterval !== null {
+    clearInterval(wsPingInterval)
+    wsPingInterval = null
+  }
+  if ws !== null {
+    ws.close()
+    ws = null
+  }
+}
+
+# ============================================================================
+# 데이터 로드
+# ============================================================================
+
+A F loadDashboardData() {
+  isLoading = true
+
+  try {
+    # 서비스 통계 조회
+    await loadStats()
+    # 최근 인시던트 조회
+    await loadRecentIncidents()
+    # 메트릭 히스토리 로드
+    await loadMetricPoints(selectedMetric)
+  } catch(e) {
+    statsError = t('dashboard.loadError')
+  } finally {
+    isLoading = false
+  }
+}
+
+A F loadStats() {
+  let token = localStorage.getItem('auth_token') || ''
+  let res = await fetch('/api/v1/admin/stats', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+  if res.ok {
+    let json = await res.json()
+    let d = json.data || json
+    stats = {
+      total_services: d.total_services || 0,
+      healthy_services: d.healthy_services || 0,
+      down_services: d.down_services || 0,
+      degraded_services: d.degraded_services || 0,
+      active_incidents: d.active_incidents || 0,
+      total_alerts: d.total_alerts || 0,
+    }
+    statsError = ''
+  } else {
+    statsError = t('dashboard.loadError')
+    # API 미구현 시 서비스 목록으로 fallback
+    await loadStatsFromServices()
+  }
+}
+
+A F loadStatsFromServices() {
+  let token = localStorage.getItem('auth_token') || ''
+  let res = await fetch('/api/v1/services', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+  if res.ok {
+    let json = await res.json()
+    let items = Array.isArray(json) ? json : (json.items || json.data || [])
+    let total = items.length
+    let healthy = items.filter(s => s.status === 'up').length
+    let down = items.filter(s => s.status === 'down').length
+    let degraded = items.filter(s => s.status === 'degraded').length
+    stats.total_services = total
+    stats.healthy_services = healthy
+    stats.down_services = down
+    stats.degraded_services = degraded
+  }
+}
+
+A F loadRecentIncidents() {
+  let token = localStorage.getItem('auth_token') || ''
+  let res = await fetch('/api/v1/incidents?status=open&limit=5', {
+    headers: { 'Authorization': 'Bearer ' + token }
+  })
+  if res.ok {
+    let json = await res.json()
+    let items = Array.isArray(json) ? json : (json.items || json.data || [])
+    recentIncidents = items.map(inc => ({
+      id: inc.id,
+      title: inc.title || '—',
+      severity: inc.severity || 'low',
+      status: inc.status || 'open',
+      service_name: inc.service_name || 'Service #' + inc.service_id,
+      time_ago: formatTimeAgo(inc.created_at),
+    }))
+    incidentsError = ''
+  } else {
+    incidentsError = t('dashboard.loadError')
+  }
+}
+
+A F loadMetricPoints(metric_name) {
+  # 더미 데이터로 차트 시각화 (API 연결 전)
+  let points = []
+  let now = Date.now()
+  for (let i = 11; i >= 0; i--) {
+    let t = now - i * 5 * 60 * 1000
+    let v = 20 + Math.random() * 60
+    points.push({
+      value: Math.round(v),
+      pct: Math.round(v),
+      ts_label: formatChartTs(t),
+      label: metric_name + ': ' + Math.round(v),
+    })
+  }
+  metricPoints = points
+  if points.length > 0 {
+    latestMetricValue = String(points[points.length - 1].value)
+  }
+}
+
+# ============================================================================
+# WebSocket 연결
+# ============================================================================
+
+F connectWebSocket() {
+  let protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  let host = window.location.host
+  let url = protocol + '//' + host + '/ws/status'
+
+  ws = new WebSocket(url)
+
+  ws.onopen = function() {
+    wsConnected = true
+    wsError = false
+    # status + alerts 채널 구독
+    ws.send(JSON.stringify({ event: 'subscribe', data: { channel: 'status' } }))
+    ws.send(JSON.stringify({ event: 'subscribe', data: { channel: 'alerts' } }))
+    # 주기적 ping
+    startWsPing()
+  }
+
+  ws.onmessage = function(e) {
+    handleWsMessage(e.data)
+  }
+
+  ws.onerror = function() {
+    wsConnected = false
+    wsError = true
+  }
+
+  ws.onclose = function() {
+    wsConnected = false
+    # 5초 후 재연결 시도
+    setTimeout(function() {
+      if ws === null || ws.readyState === WebSocket.CLOSED {
+        connectWebSocket()
+      }
+    }, 5000)
+  }
+}
+
+F startWsPing() {
+  wsPingInterval = setInterval(function() {
+    if ws !== null && ws.readyState === WebSocket.OPEN {
+      ws.send(JSON.stringify({ event: 'ping' }))
+    }
+  }, 30000)
+}
+
+F handleWsMessage(raw) {
+  let msg = null
+  try {
+    msg = JSON.parse(raw)
+  } catch (ex) {
+    return
+  }
+  if msg === null { return }
+
+  let event = msg.event || ''
+  let data = msg.data || {}
+
+  if event === 'metric' {
+    handleMetricEvent(data)
+  } else if event === 'healthcheck' {
+    handleHealthcheckEvent(data)
+  } else if event === 'incident' {
+    handleIncidentEvent(data)
+  } else if event === 'alert' {
+    handleAlertEvent(data)
+  } else if event === 'dashboard_snapshot' {
+    handleSnapshotEvent(data)
+  }
+}
+
+# ============================================================================
+# 실시간 이벤트 핸들러
+# ============================================================================
+
+F handleMetricEvent(data) {
+  # 메트릭 차트 포인트 업데이트 (최신 값 추가, 오래된 값 제거)
+  if selectedMetric === data.metric_name {
+    let v = Math.round(parseFloat(data.value) || 0)
+    let newPt = {
+      value: v,
+      pct: Math.min(v, 100),
+      ts_label: 'now',
+      label: data.metric_name + ': ' + v,
+    }
+    metricPoints = [...metricPoints.slice(-11), newPt]
+    latestMetricValue = String(v)
+  }
+
+  # 이벤트 피드에 추가
+  pushEvent({
+    type: 'metric',
+    label: 'Metric: ' + (data.metric_name || ''),
+    service_name: 'Service #' + (data.service_id || ''),
+    badge: data.metric_name || 'metric',
+    severity: 'info',
+    status: '',
+    time_ago: 'just now',
+  })
+}
+
+F handleHealthcheckEvent(data) {
+  let status = data.status || 'unknown'
+
+  # 서비스 상태 변경 시 통계 갱신
+  if status === 'down' {
+    stats.down_services = stats.down_services + 1
+    if stats.healthy_services > 0 {
+      stats.healthy_services = stats.healthy_services - 1
+    }
+  } else if status === 'up' {
+    stats.healthy_services = stats.healthy_services + 1
+    if stats.down_services > 0 {
+      stats.down_services = stats.down_services - 1
+    }
+  }
+
+  pushEvent({
+    type: 'healthcheck',
+    label: 'Health: ' + (data.service_name || ''),
+    service_name: data.service_name || '',
+    badge: status,
+    severity: status === 'down' ? 'critical' : status === 'degraded' ? 'warning' : 'info',
+    status: status,
+    time_ago: 'just now',
+  })
+}
+
+F handleIncidentEvent(data) {
+  let status = data.status || 'open'
+  let severity = data.severity || 'low'
+
+  # 활성 인시던트 수 갱신
+  if status === 'open' {
+    stats.active_incidents = stats.active_incidents + 1
+  } else if status === 'resolved' && stats.active_incidents > 0 {
+    stats.active_incidents = stats.active_incidents - 1
+  }
+
+  # 최근 인시던트 목록 갱신
+  if status === 'open' {
+    let newInc = {
+      id: data.incident_id,
+      title: data.title || '—',
+      severity: severity,
+      status: status,
+      service_name: 'Service #' + (data.service_id || ''),
+      time_ago: 'just now',
+    }
+    recentIncidents = [newInc, ...recentIncidents.slice(0, 4)]
+  }
+
+  pushEvent({
+    type: 'incident',
+    label: 'Incident: ' + (data.title || ''),
+    service_name: 'Service #' + (data.service_id || ''),
+    badge: severity,
+    severity: severity,
+    status: status,
+    time_ago: 'just now',
+  })
+}
+
+F handleAlertEvent(data) {
+  pushEvent({
+    type: 'alert',
+    label: 'Alert: ' + (data.name || ''),
+    service_name: data.condition_metric || '',
+    badge: data.severity || 'info',
+    severity: data.severity || 'info',
+    status: 'triggered',
+    time_ago: 'just now',
+  })
+}
+
+F handleSnapshotEvent(data) {
+  # 서버에서 전체 상태 스냅샷 수신 → stats 동기화
+  if data.total_services !== undefined {
+    stats = {
+      total_services: parseInt(data.total_services) || stats.total_services,
+      healthy_services: parseInt(data.healthy_services) || stats.healthy_services,
+      down_services: parseInt(data.down_services) || stats.down_services,
+      degraded_services: parseInt(data.degraded_services) || stats.degraded_services,
+      active_incidents: parseInt(data.active_incidents) || stats.active_incidents,
+      total_alerts: parseInt(data.total_alerts) || stats.total_alerts,
+    }
+  }
+}
+
+# ============================================================================
+# 이벤트 피드 관리
+# ============================================================================
+
+F pushEvent(ev) {
+  recentEvents = [ev, ...recentEvents.slice(0, 19)]
+}
+
+# ============================================================================
+# UI 이벤트 핸들러
+# ============================================================================
+
+A F handleRefresh() {
+  await loadDashboardData()
+}
+
+A F handleSelectMetric(name) {
+  selectedMetric = name
+  await loadMetricPoints(name)
+}
+
+# ============================================================================
+# 포맷 헬퍼
+# ============================================================================
+
+F formatTimeAgo(ts) {
+  if !ts { return '—' }
+  let now = Math.floor(Date.now() / 1000)
+  let sec = ts > 1e10 ? Math.floor(ts / 1000) : ts
+  let diff = now - sec
+  if diff < 60 { return diff + 's ago' }
+  if diff < 3600 { return Math.floor(diff / 60) + 'm ago' }
+  if diff < 86400 { return Math.floor(diff / 3600) + 'h ago' }
+  return Math.floor(diff / 86400) + 'd ago'
+}
+
+F formatChartTs(ms) {
+  let d = new Date(ms)
+  let h = String(d.getHours()).padStart(2, '0')
+  let m = String(d.getMinutes()).padStart(2, '0')
+  return h + ':' + m
+}
+
+# 마운트/언마운트 훅 실행
+onMount()
+</script>
+
+<style scoped>
+.dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* 페이지 헤더 */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.page-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 4px;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 실시간 연결 상태 */
+.ws-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.ws-status.connected .ws-dot {
+  background: var(--color-success);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+  animation: pulse-dot 2s ease infinite;
+}
+
+.ws-status.connected .ws-label {
+  color: var(--color-success);
+}
+
+.ws-status.error .ws-dot {
+  background: var(--color-danger);
+}
+
+.ws-status.error .ws-label {
+  color: var(--color-danger);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2); }
+  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
+}
+
+.btn-refresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.btn-refresh:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-hover);
+}
+
+.refresh-icon {
+  font-size: 16px;
+  display: inline-block;
+  transition: transform 0.5s;
+}
+
+.refresh-icon.spinning {
+  animation: spin 0.8s linear infinite;
+}
+
+/* 요약 카드 그리드 */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.summary-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: box-shadow 0.15s, transform 0.1s;
+  position: relative;
+  overflow: hidden;
+}
+
+.summary-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  transform: translateY(-1px);
+}
+
+.card-icon {
+  font-size: 20px;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.card-icon--success { background: rgba(16, 185, 129, 0.1); color: var(--color-success); }
+.card-icon--danger  { background: rgba(239, 68, 68, 0.1);  color: var(--color-danger);  }
+.card-icon--warning { background: rgba(245, 158, 11, 0.1); color: var(--color-warning); }
+.card-icon--info    { background: rgba(59, 130, 246, 0.1); color: var(--color-info);    }
+.card-icon--primary { background: var(--color-primary-muted); color: var(--color-primary); }
+
+.card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.card-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.card-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1.2;
+}
+
+.card-value--success { color: var(--color-success); }
+.card-value--danger  { color: var(--color-danger);  }
+.card-value--warning { color: var(--color-warning); }
+
+.card-link {
+  font-size: 12px;
+  color: var(--color-primary);
+  text-decoration: none;
+  margin-top: auto;
+  font-weight: 500;
+}
+
+.card-link:hover {
+  text-decoration: underline;
+}
+
+.card-bar {
+  height: 4px;
+  background: var(--color-border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin-top: auto;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.5s ease;
+}
+
+.bar-fill--success { background: var(--color-success); }
+.bar-fill--danger  { background: var(--color-danger);  }
+.bar-fill--warning { background: var(--color-warning); }
+
+/* 하단 2단 레이아웃 */
+.dashboard-body {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* 패널 공통 */
+.panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+  gap: 8px;
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.panel-link {
+  font-size: 12px;
+  color: var(--color-primary);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.panel-link:hover {
+  text-decoration: underline;
+}
+
+/* 이벤트 카운트 배지 */
+.event-count-badge {
+  background: var(--color-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 10px;
+  min-width: 20px;
+  text-align: center;
+}
+
+/* 실시간 이벤트 피드 */
+.event-list {
+  padding: 8px 0;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.event-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  border-left: 3px solid transparent;
+  transition: background 0.1s;
+}
+
+.event-item:hover {
+  background: var(--color-hover);
+}
+
+.event-item--danger  { border-left-color: var(--color-danger);  }
+.event-item--warning { border-left-color: var(--color-warning); }
+.event-item--success { border-left-color: var(--color-success); }
+.event-item--info    { border-left-color: var(--color-info);    }
+
+.event-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-border);
+  flex-shrink: 0;
+}
+
+.event-item--danger .event-dot  { background: var(--color-danger);  }
+.event-item--warning .event-dot { background: var(--color-warning); }
+.event-item--success .event-dot { background: var(--color-success); }
+.event-item--info .event-dot    { background: var(--color-info);    }
+
+.event-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.event-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.event-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.event-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.event-badge--critical { background: rgba(239, 68, 68, 0.12); color: var(--color-danger);  }
+.event-badge--warning  { background: rgba(245, 158, 11, 0.12); color: var(--color-warning); }
+.event-badge--info     { background: rgba(59, 130, 246, 0.12); color: var(--color-info);    }
+.event-badge--metric   { background: rgba(99, 102, 241, 0.12); color: var(--color-primary); }
+
+/* 메트릭 차트 */
+.chart-controls {
+  display: flex;
+  gap: 4px;
+}
+
+.chart-tab {
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.chart-tab:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.chart-tab.active {
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.chart-area {
+  padding: 16px 20px;
+  min-height: 160px;
+}
+
+.chart-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 120px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.bar-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 120px;
+  padding-bottom: 20px;
+  position: relative;
+}
+
+.bar-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  gap: 4px;
+}
+
+.bar-segment {
+  width: 100%;
+  min-height: 4px;
+  border-radius: 3px 3px 0 0;
+  background: var(--color-primary);
+  transition: height 0.3s ease;
+}
+
+.bar-segment--warn   { background: var(--color-warning); }
+.bar-segment--danger { background: var(--color-danger);  }
+
+.bar-ts {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: clip;
+  max-width: 100%;
+  text-align: center;
+}
+
+.chart-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+.legend-dot--primary { background: var(--color-primary); }
+
+.legend-latest {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* 인시던트 목록 */
+.incident-list {
+  padding: 4px 0;
+}
+
+.incident-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.incident-row:last-child {
+  border-bottom: none;
+}
+
+.incident-row:hover {
+  background: var(--color-hover);
+}
+
+.severity-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 7px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  flex-shrink: 0;
+}
+
+.severity-badge--critical { background: rgba(239, 68, 68, 0.12); color: var(--color-danger);  }
+.severity-badge--high     { background: rgba(239, 68, 68, 0.08); color: #f87171;              }
+.severity-badge--medium   { background: rgba(245, 158, 11, 0.12); color: var(--color-warning); }
+.severity-badge--low      { background: rgba(59, 130, 246, 0.12); color: var(--color-info);    }
+
+.incident-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.incident-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.incident-meta {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.status-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+
+.status-chip--open         { background: rgba(239, 68, 68, 0.1); color: var(--color-danger);  }
+.status-chip--acknowledged { background: rgba(245, 158, 11, 0.1); color: var(--color-warning); }
+.status-chip--resolved     { background: rgba(16, 185, 129, 0.1); color: var(--color-success); }
+
+/* 빈 상태 */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  gap: 8px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.empty-icon {
+  font-size: 24px;
+  color: var(--color-success);
+}
+
+/* 반응형 */
+@media (max-width: 768px) {
+  .summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .page-header {
+    flex-direction: column;
+  }
+
+  .header-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 480px) {
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

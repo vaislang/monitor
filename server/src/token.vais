@@ -1,0 +1,54 @@
+
+F create_jwt_claims(user_id: i64, email: str, role: str, issuer: str, ttl_sec: i64) -> str {
+    now_ms := current_time_ms()
+    now_sec := now_ms / 1000
+    exp := now_sec + ttl_sec
+    claims := "{}"
+    claims = json_set(claims, "sub", i64_to_str(user_id))
+    claims = json_set(claims, "email", email)
+    claims = json_set(claims, "role", role)
+    claims = json_set(claims, "iss", issuer)
+    claims = json_set(claims, "exp", i64_to_str(exp))
+    claims = json_set(claims, "iat", i64_to_str(now_sec))
+    claims
+}
+
+F create_access_token(user_id: i64, email: str, role: str, config: &ServerConfig) -> str {
+    claims := create_jwt_claims(user_id, email, role, config.jwt_issuer, config.jwt_access_ttl)
+    jwt_encode(claims, config.jwt_secret)
+}
+
+F create_refresh_token(user_id: i64, config: &ServerConfig) -> str {
+    token := generate_uuid()
+    now_ms := current_time_ms()
+    now_sec := now_ms / 1000
+    expires_at := now_sec + config.jwt_refresh_ttl
+    db_prepare("insert_session",
+        "INSERT INTO sessions (user_id, refresh_token, expires_at, created_at) VALUES (?, ?, ?, ?)")
+    sess_params := "[]"
+    sess_params = json_set(sess_params, "0", i64_to_str(user_id))
+    sess_params = json_set(sess_params, "1", token)
+    sess_params = json_set(sess_params, "2", i64_to_str(expires_at))
+    sess_params = json_set(sess_params, "3", i64_to_str(now_sec))
+    inserted := db_execute_prepared("insert_session", sess_params)
+    I inserted == 0 { R "" }
+    token
+}
+
+F verify_token(token: str, secret: str) -> str {
+    claims := jwt_decode(token, secret)
+    I str_len(claims) == 0 { R "" }
+    exp_str := json_get(claims, "exp")
+    exp := str_to_i64(exp_str)
+    now_sec := current_time_ms() / 1000
+    I now_sec > exp { R "" }
+    claims
+}
+
+F hash_pw(password: str) -> str {
+    hash_password(password)
+}
+
+F verify_pw(password: str, hash: str) -> bool {
+    verify_password(password, hash)
+}

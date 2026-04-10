@@ -1,0 +1,445 @@
+
+# ============================================================================
+# 헬퍼
+# ============================================================================
+
+# 헤더에서 현재 사용자 정보 추출
+# 반환: user JSON or ""
+F get_current_user(headers: str) -> str {
+    token := extract_token_from_headers(headers)
+    I str_len(token) == 0 {
+        R ""
+    }
+    cfg := ServerConfig::default()
+    claims := verify_token(token, cfg.jwt_secret)
+    I str_len(claims) == 0 {
+        R ""
+    }
+    user_id := str_to_i64(json_get(claims, "sub"))
+    find_user_by_id(user_id)
+}
+
+# 헤더에서 현재 사용자 ID 추출
+# 반환: user id (0이면 미인증)
+F get_current_user_id(headers: str) -> i64 {
+    token := extract_token_from_headers(headers)
+    I str_len(token) == 0 {
+        R 0
+    }
+    cfg := ServerConfig::default()
+    claims := verify_token(token, cfg.jwt_secret)
+    I str_len(claims) == 0 {
+        R 0
+    }
+    str_to_i64(json_get(claims, "sub"))
+}
+
+# 헤더에서 현재 사용자 역할 추출
+# 반환: role string or ""
+F get_current_user_role(headers: str) -> str {
+    token := extract_token_from_headers(headers)
+    I str_len(token) == 0 {
+        R ""
+    }
+    cfg := ServerConfig::default()
+    claims := verify_token(token, cfg.jwt_secret)
+    I str_len(claims) == 0 {
+        R ""
+    }
+    json_get(claims, "role")
+}
+
+# 헤더에서 현재 사용자 팀 ID 추출
+# 반환: team_id (0이면 소속 없음 또는 미인증)
+F get_current_user_team_id(headers: str) -> i64 {
+    user_json := get_current_user(headers)
+    I str_len(user_json) == 0 {
+        R 0
+    }
+    str_to_i64(json_get(user_json, "team_id"))
+}
+
+# ============================================================================
+# 사용자 API 핸들러
+# ============================================================================
+
+# GET /api/v1/users/me — 현재 사용자 프로필 조회
+F handle_get_me(headers: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    user_id := str_to_i64(json_get(claims, "sub"))
+    user_json := find_user_by_id(user_id)
+    I str_len(user_json) == 0 {
+        R error_response(404, "User not found")
+    }
+
+    # password_hash 제외한 응답 생성
+    safe_user := user_to_json(
+        str_to_i64(json_get(user_json, "id")),
+        json_get(user_json, "email"),
+        json_get(user_json, "name"),
+        json_get(user_json, "role"),
+        str_to_i64(json_get(user_json, "team_id"))
+    )
+    resp_body := "{\"user\":" + safe_user + "}"
+    json_response(200, resp_body)
+}
+
+# PUT /api/v1/users/me — 현재 사용자 프로필 수정
+# body: {"name": "...", "role": "..."(admin only)}
+F handle_update_me(headers: str, body: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    user_id := str_to_i64(json_get(claims, "sub"))
+    current_role := json_get(claims, "role")
+
+    user_json := find_user_by_id(user_id)
+    I str_len(user_json) == 0 {
+        R error_response(404, "User not found")
+    }
+
+    new_name := json_get(body, "name")
+    new_role := json_get(body, "role")
+
+    # name이 없으면 기존 값 유지
+    apply_name := I str_len(new_name) > 0 { new_name } EL { json_get(user_json, "name") }
+
+    # role 변경은 admin만 가능
+    apply_role := I str_len(new_role) > 0 {
+        I require_role(current_role, "admin") {
+            new_role
+        } EL {
+            json_get(user_json, "role")
+        }
+    } EL {
+        json_get(user_json, "role")
+    }
+
+    update_user(user_id, apply_name, apply_role)
+
+    updated_json := find_user_by_id(user_id)
+    safe_user := user_to_json(
+        str_to_i64(json_get(updated_json, "id")),
+        json_get(updated_json, "email"),
+        json_get(updated_json, "name"),
+        json_get(updated_json, "role"),
+        str_to_i64(json_get(updated_json, "team_id"))
+    )
+    resp_body := "{\"user\":" + safe_user + "}"
+    json_response(200, resp_body)
+}
+
+# GET /api/v1/users — 사용자 목록 조회
+# RLS: admin → 전체(team_id=0), 그 외 → 자기 팀
+# 쿼리 파라미터: ?page=1&limit=20
+F handle_list_users(headers: str, query: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    current_user_id := str_to_i64(json_get(claims, "sub"))
+
+    # 페이징 파라미터 파싱
+    paging := parse_pagination(query, 20, 100)
+    page := str_to_i64(json_get(paging, "page"))
+    limit := str_to_i64(json_get(paging, "limit"))
+    offset := str_to_i64(json_get(paging, "offset"))
+
+    # RLS 적용: admin은 전체, 그 외는 자기 팀
+    filter_team_id := I require_role(current_role, "admin") {
+        0
+    } EL {
+        user_json := find_user_by_id(current_user_id)
+        str_to_i64(json_get(user_json, "team_id"))
+    }
+
+    users_arr := list_users(filter_team_id, limit, offset)
+    total := count_users(filter_team_id)
+
+    resp_body := "{\"users\":" + users_arr +
+        ",\"total\":" + i64_to_str(total) +
+        ",\"page\":" + i64_to_str(page) +
+        ",\"limit\":" + i64_to_str(limit) + "}"
+    json_response(200, resp_body)
+}
+
+# GET /api/v1/users/:id — 특정 사용자 조회
+# RLS: 같은 팀이거나 admin
+F handle_get_user(headers: str, user_id: i64) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    current_user_id := str_to_i64(json_get(claims, "sub"))
+
+    target_json := find_user_by_id(user_id)
+    I str_len(target_json) == 0 {
+        R error_response(404, "User not found")
+    }
+
+    # RLS: admin이면 전체 접근, 아니면 같은 팀인지 확인
+    is_admin := require_role(current_role, "admin")
+    is_self := current_user_id == user_id
+    target_team_id := str_to_i64(json_get(target_json, "team_id"))
+    current_user_json := find_user_by_id(current_user_id)
+    current_team_id := str_to_i64(json_get(current_user_json, "team_id"))
+    same_team := target_team_id == current_team_id && target_team_id > 0
+
+    allowed := is_admin || is_self || same_team
+    I !allowed {
+        R error_response(403, "Access denied")
+    }
+
+    safe_user := user_to_json(
+        str_to_i64(json_get(target_json, "id")),
+        json_get(target_json, "email"),
+        json_get(target_json, "name"),
+        json_get(target_json, "role"),
+        str_to_i64(json_get(target_json, "team_id"))
+    )
+    resp_body := "{\"user\":" + safe_user + "}"
+    json_response(200, resp_body)
+}
+
+# PUT /api/v1/users/:id/role — 역할 변경 (admin only)
+# body: {"role": "member"}
+F handle_update_role(headers: str, user_id: i64, body: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "admin") {
+        R error_response(403, "Admin role required")
+    }
+
+    target_json := find_user_by_id(user_id)
+    I str_len(target_json) == 0 {
+        R error_response(404, "User not found")
+    }
+
+    new_role := json_get(body, "role")
+    I str_len(new_role) == 0 {
+        R error_response(400, "role is required")
+    }
+
+    valid_role := new_role == "admin" || new_role == "member" || new_role == "viewer"
+    I !valid_role {
+        R error_response(400, "Invalid role. Must be admin, member, or viewer")
+    }
+
+    current_name := json_get(target_json, "name")
+    update_user(user_id, current_name, new_role)
+
+    updated_json := find_user_by_id(user_id)
+    safe_user := user_to_json(
+        str_to_i64(json_get(updated_json, "id")),
+        json_get(updated_json, "email"),
+        json_get(updated_json, "name"),
+        json_get(updated_json, "role"),
+        str_to_i64(json_get(updated_json, "team_id"))
+    )
+    resp_body := "{\"user\":" + safe_user + "}"
+    json_response(200, resp_body)
+}
+
+# DELETE /api/v1/users/:id — 사용자 삭제 (admin only)
+F handle_delete_user(headers: str, user_id: i64) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "admin") {
+        R error_response(403, "Admin role required")
+    }
+
+    current_user_id := str_to_i64(json_get(claims, "sub"))
+    I current_user_id == user_id {
+        R error_response(400, "Cannot delete your own account")
+    }
+
+    target_json := find_user_by_id(user_id)
+    I str_len(target_json) == 0 {
+        R error_response(404, "User not found")
+    }
+
+    delete_user(user_id)
+
+    resp_body := "{\"message\":\"User deleted successfully\"}"
+    json_response(200, resp_body)
+}
+
+# ============================================================================
+# 팀 API 핸들러
+# ============================================================================
+
+# GET /api/v1/teams — 팀 목록 조회
+F handle_list_teams(headers: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    teams_arr := list_teams()
+    resp_body := "{\"teams\":" + teams_arr + "}"
+    json_response(200, resp_body)
+}
+
+# POST /api/v1/teams — 팀 생성 (admin only)
+# body: {"name": "..."}
+F handle_create_team(headers: str, body: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "admin") {
+        R error_response(403, "Admin role required")
+    }
+
+    team_name := json_get(body, "name")
+    I str_len(team_name) == 0 {
+        R error_response(400, "name is required")
+    }
+
+    team_id := create_team(team_name)
+    team_json := find_team_by_id(team_id)
+    resp_body := "{\"team\":" + team_json + "}"
+    json_response(201, resp_body)
+}
+
+# PUT /api/v1/teams/:id — 팀 수정 (admin only)
+# body: {"name": "..."}
+F handle_update_team(headers: str, team_id: i64, body: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "admin") {
+        R error_response(403, "Admin role required")
+    }
+
+    existing_team := find_team_by_id(team_id)
+    I str_len(existing_team) == 0 {
+        R error_response(404, "Team not found")
+    }
+
+    new_name := json_get(body, "name")
+    I str_len(new_name) == 0 {
+        R error_response(400, "name is required")
+    }
+
+    update_team(team_id, new_name)
+
+    updated_team := find_team_by_id(team_id)
+    resp_body := "{\"team\":" + updated_team + "}"
+    json_response(200, resp_body)
+}
+
+# DELETE /api/v1/teams/:id — 팀 삭제 (admin only)
+F handle_delete_team(headers: str, team_id: i64) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "admin") {
+        R error_response(403, "Admin role required")
+    }
+
+    existing_team := find_team_by_id(team_id)
+    I str_len(existing_team) == 0 {
+        R error_response(404, "Team not found")
+    }
+
+    delete_team(team_id)
+
+    resp_body := "{\"message\":\"Team deleted successfully\"}"
+    json_response(200, resp_body)
+}
+
+# POST /api/v1/teams/:id/members — 팀에 사용자 추가 (admin only)
+# body: {"user_id": N}
+F handle_add_team_member(headers: str, team_id: i64, body: str) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "admin") {
+        R error_response(403, "Admin role required")
+    }
+
+    team_json := find_team_by_id(team_id)
+    I str_len(team_json) == 0 {
+        R error_response(404, "Team not found")
+    }
+
+    user_id_str := json_get(body, "user_id")
+    I str_len(user_id_str) == 0 {
+        R error_response(400, "user_id is required")
+    }
+    target_user_id := str_to_i64(user_id_str)
+
+    user_json := find_user_by_id(target_user_id)
+    I str_len(user_json) == 0 {
+        R error_response(404, "User not found")
+    }
+
+    add_user_to_team(target_user_id, team_id)
+
+    resp_body := "{\"message\":\"User added to team successfully\"}"
+    json_response(200, resp_body)
+}
+
+# DELETE /api/v1/teams/:id/members/:user_id — 팀에서 사용자 제거 (admin only)
+F handle_remove_team_member(headers: str, team_id: i64, user_id: i64) -> str {
+    claims := require_auth(headers)
+    I str_len(claims) == 0 {
+        R error_response(401, "Unauthorized")
+    }
+
+    current_role := json_get(claims, "role")
+    I !require_role(current_role, "admin") {
+        R error_response(403, "Admin role required")
+    }
+
+    team_json := find_team_by_id(team_id)
+    I str_len(team_json) == 0 {
+        R error_response(404, "Team not found")
+    }
+
+    user_json := find_user_by_id(user_id)
+    I str_len(user_json) == 0 {
+        R error_response(404, "User not found")
+    }
+
+    # 해당 사용자가 실제로 이 팀에 속해 있는지 확인
+    user_team_id := str_to_i64(json_get(user_json, "team_id"))
+    I user_team_id != team_id {
+        R error_response(400, "User is not a member of this team")
+    }
+
+    remove_user_from_team(user_id)
+
+    resp_body := "{\"message\":\"User removed from team successfully\"}"
+    json_response(200, resp_body)
+}

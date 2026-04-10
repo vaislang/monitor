@@ -1,0 +1,1249 @@
+<template>
+  <div class="ai-page">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <div class="header-info">
+        <h1 class="page-title">{t('ai.title')}</h1>
+        <p class="page-subtitle">{t('ai.subtitle')}</p>
+      </div>
+      <div class="header-actions">
+        <!-- 소스 타입 필터 -->
+        <div class="source-filter">
+          <button
+            class="filter-btn"
+            class:active={sourceFilter === 'log'}
+            @click="() => setSourceFilter('log')"
+            title={t('ai.filterLog')}
+          >
+            <span class="filter-icon">≡</span>
+            <span class="filter-label">{t('ai.filterLog')}</span>
+          </button>
+          <button
+            class="filter-btn"
+            class:active={sourceFilter === 'incident'}
+            @click="() => setSourceFilter('incident')"
+            title={t('ai.filterIncident')}
+          >
+            <span class="filter-icon">⛔</span>
+            <span class="filter-label">{t('ai.filterIncident')}</span>
+          </button>
+          <button
+            class="filter-btn"
+            class:active={sourceFilter === 'metric'}
+            @click="() => setSourceFilter('metric')"
+            title={t('ai.filterMetric')}
+          >
+            <span class="filter-icon">◉</span>
+            <span class="filter-label">{t('ai.filterMetric')}</span>
+          </button>
+        </div>
+        <!-- 새 대화 / 초기화 버튼 -->
+        <button
+          class="action-btn new-chat-btn"
+          @click="startNewSession"
+          title={t('ai.newChat')}
+          disabled={isLoading}
+        >
+          <span class="action-icon">✦</span>
+          <span>{t('ai.newChat')}</span>
+        </button>
+        <button
+          class="action-btn clear-btn"
+          @click="clearHistory"
+          title={t('ai.clearHistory')}
+          disabled={messages.length === 0 || isLoading}
+        >
+          <span class="action-icon">✕</span>
+          <span>{t('ai.clearHistory')}</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 채팅 영역 -->
+    <div class="chat-container">
+      <!-- 메시지 목록 -->
+      <div class="messages-area" id="messages-area">
+        {#if messages.length === 0}
+          <!-- 환영 메시지 / 빈 상태 -->
+          <div class="empty-state">
+            <div class="empty-icon">✦</div>
+            <h2 class="empty-title">{t('ai.emptyTitle')}</h2>
+            <p class="empty-desc">{t('ai.emptyDesc')}</p>
+            <!-- 예시 질문 -->
+            <div class="example-queries">
+              {#each exampleQueries as example}
+                <button class="example-btn" @click="() => useExample(example)">
+                  <span class="example-icon">→</span>
+                  <span>{example}</span>
+                </button>
+              {/each}
+            </div>
+          </div>
+        {:else}
+          {#each messages as message}
+            <div class="message-row" class:user-row={message.role === 'user'} class:ai-row={message.role === 'assistant'}>
+              <!-- 아바타 -->
+              <div class="message-avatar" class:user-avatar={message.role === 'user'} class:ai-avatar={message.role === 'assistant'}>
+                {#if message.role === 'user'}
+                  <span>U</span>
+                {:else}
+                  <span>✦</span>
+                {/if}
+              </div>
+
+              <!-- 메시지 본문 -->
+              <div class="message-bubble" class:user-bubble={message.role === 'user'} class:ai-bubble={message.role === 'assistant'}>
+                <div class="message-content">{message.content}</div>
+
+                <!-- AI 응답: 소스 참조 표시 -->
+                {#if message.role === 'assistant' && message.sources && message.sources.length > 0}
+                  <div class="sources-section">
+                    <div class="sources-header">
+                      <span class="sources-icon">⬡</span>
+                      <span class="sources-label">{t('ai.sources')}</span>
+                    </div>
+                    <div class="sources-list">
+                      {#each message.sources as source, idx}
+                        <div class="source-item" class:source-log={source.type === 'log'} class:source-incident={source.type === 'incident'} class:source-metric={source.type === 'metric'}>
+                          <span class="source-badge">{source.type}</span>
+                          <span class="source-rank">#{idx + 1}</span>
+                          <span class="source-text">{source.content}</span>
+                          {#if source.score}
+                            <span class="source-score">{formatScore(source.score)}</span>
+                          {/if}
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- 메시지 메타 (타임스탬프) -->
+                <div class="message-meta">
+                  <span class="message-time">{formatTime(message.timestamp)}</span>
+                  {#if message.role === 'assistant' && message.sourceType}
+                    <span class="message-source-type">
+                      <span class="source-type-dot"></span>
+                      {message.sourceType}
+                    </span>
+                  {/if}
+                </div>
+              </div>
+            </div>
+          {/each}
+
+          <!-- 타이핑 인디케이터 (로딩 중) -->
+          {#if isLoading}
+            <div class="message-row ai-row">
+              <div class="message-avatar ai-avatar">
+                <span>✦</span>
+              </div>
+              <div class="message-bubble ai-bubble typing-bubble">
+                <div class="typing-indicator">
+                  <span class="dot"></span>
+                  <span class="dot"></span>
+                  <span class="dot"></span>
+                </div>
+                <span class="typing-label">{t('ai.thinking')}</span>
+              </div>
+            </div>
+          {/if}
+        {/if}
+      </div>
+
+      <!-- 입력 영역 -->
+      <div class="input-area">
+        <!-- 현재 세션 정보 -->
+        {#if sessionId}
+          <div class="session-info">
+            <span class="session-icon">◈</span>
+            <span class="session-id">{t('ai.session')}: {shortSessionId}</span>
+            <span class="session-filter">
+              {t('ai.filterLabel')}:
+              <span class="filter-tag" class:filter-log={sourceFilter === 'log'} class:filter-incident={sourceFilter === 'incident'} class:filter-metric={sourceFilter === 'metric'}>
+                {sourceFilter}
+              </span>
+            </span>
+          </div>
+        {/if}
+
+        <!-- 에러 메시지 -->
+        {#if errorMessage}
+          <div class="error-banner" role="alert">
+            <span class="error-icon">⚠</span>
+            <span>{errorMessage}</span>
+            <button class="error-close" @click="() => { errorMessage = '' }" aria-label="Close error">✕</button>
+          </div>
+        {/if}
+
+        <!-- 텍스트 입력 폼 -->
+        <form class="input-form" @submit|preventDefault="handleSubmit">
+          <div class="input-wrapper">
+            <textarea
+              class="chat-input"
+              bind:value={inputText}
+              placeholder={t('ai.inputPlaceholder')}
+              rows={1}
+              disabled={isLoading}
+              @keydown="handleKeydown"
+              @input="autoResize"
+              id="chat-input"
+            ></textarea>
+            <button
+              type="submit"
+              class="send-btn"
+              disabled={isLoading || str_len(inputText.trim()) === 0}
+              title={t('ai.send')}
+            >
+              {#if isLoading}
+                <span class="send-spinner"></span>
+              {:else}
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="22" y1="2" x2="11" y2="13" />
+                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                </svg>
+              {/if}
+            </button>
+          </div>
+          <div class="input-hint">
+            <span>{t('ai.inputHint')}</span>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+import { t } from '../i18n.vais'
+
+# ============================================================================
+# 타입 정의
+# ============================================================================
+
+# 소스 참조 타입
+S SourceRef {
+  type: str,
+  content: str,
+  score: f64,
+  doc_id: i64
+}
+
+# 채팅 메시지 타입
+S ChatMessage {
+  id: str,
+  role: str,        # "user" | "assistant"
+  content: str,
+  timestamp: i64,
+  sources: Vec<SourceRef>,
+  sourceType: str
+}
+
+# ============================================================================
+# 상태 변수
+# ============================================================================
+
+# 메시지 히스토리
+let messages: Vec<ChatMessage> = []
+
+# 입력 텍스트
+let inputText = ''
+
+# 소스 타입 필터 (log / incident / metric)
+let sourceFilter = 'log'
+
+# 세션 ID (UUID 형태)
+let sessionId = ''
+
+# 로딩 상태
+let isLoading = false
+
+# 에러 메시지
+let errorMessage = ''
+
+# 예시 질의 목록
+let exampleQueries = [
+  t('ai.example1'),
+  t('ai.example2'),
+  t('ai.example3')
+]
+
+# ============================================================================
+# 파생 상태
+# ============================================================================
+
+# 세션 ID 짧게 표시 (앞 8자리)
+$: shortSessionId = str_len(sessionId) > 8 ? sessionId.slice(0, 8) + '...' : sessionId
+
+# ============================================================================
+# 초기화: 세션 ID 생성
+# ============================================================================
+
+F generateSessionId() -> str {
+  let ts = Date.now().toString(36)
+  let rand = Math.random().toString(36).slice(2, 10)
+  ts + '-' + rand
+}
+
+# 페이지 로드 시 세션 초기화
+sessionId = generateSessionId()
+
+# ============================================================================
+# 소스 필터 변경
+# ============================================================================
+
+F setSourceFilter(type: str) {
+  sourceFilter = type
+}
+
+# ============================================================================
+# 새 대화 시작 (세션 재생성, 메시지 초기화)
+# ============================================================================
+
+F startNewSession() {
+  if isLoading { R }
+  sessionId = generateSessionId()
+  messages = []
+  inputText = ''
+  errorMessage = ''
+}
+
+# ============================================================================
+# 대화 초기화 (현재 세션 유지, 메시지만 삭제)
+# ============================================================================
+
+F clearHistory() {
+  if isLoading { R }
+  if messages.length === 0 { R }
+  messages = []
+  errorMessage = ''
+}
+
+# ============================================================================
+# 예시 질의 사용
+# ============================================================================
+
+F useExample(example: str) {
+  if isLoading { R }
+  inputText = example
+  let el = document.getElementById('chat-input')
+  if el {
+    el.focus()
+    autoResize()
+  }
+}
+
+# ============================================================================
+# textarea 자동 높이 조절
+# ============================================================================
+
+F autoResize() {
+  let el = document.getElementById('chat-input')
+  if el {
+    el.style.height = 'auto'
+    let scrollH = el.scrollHeight
+    let maxH = 160
+    el.style.height = (scrollH < maxH ? scrollH : maxH) + 'px'
+  }
+}
+
+# ============================================================================
+# 키다운 핸들러 (Enter: 제출, Shift+Enter: 줄바꿈)
+# ============================================================================
+
+F handleKeydown(e) {
+  if e.key === 'Enter' && !e.shiftKey {
+    e.preventDefault()
+    handleSubmit()
+  }
+}
+
+# ============================================================================
+# 메시지 영역 맨 아래로 스크롤
+# ============================================================================
+
+F scrollToBottom() {
+  let container = document.getElementById('messages-area')
+  if container {
+    let lastMsg = container.lastElementChild
+    if lastMsg {
+      lastMsg.scrollIntoView({ behavior: 'smooth', block: 'end' })
+    }
+  }
+}
+
+# ============================================================================
+# 타임스탬프 포맷
+# ============================================================================
+
+F formatTime(ts: i64) -> str {
+  let d = new Date(ts)
+  let h = d.getHours().toString().padStart(2, '0')
+  let m = d.getMinutes().toString().padStart(2, '0')
+  let s = d.getSeconds().toString().padStart(2, '0')
+  h + ':' + m + ':' + s
+}
+
+# ============================================================================
+# 점수 포맷 (소수점 4자리)
+# ============================================================================
+
+F formatScore(score: f64) -> str {
+  score.toFixed(4)
+}
+
+# ============================================================================
+# search_results JSON 파싱 → SourceRef 배열 변환
+# ============================================================================
+
+F parseSourceRefs(searchResults: any, sourceType: str) -> Vec<SourceRef> {
+  let refs: Vec<SourceRef> = []
+  if !searchResults || !Array.isArray(searchResults) {
+    R refs
+  }
+  let i = 0
+  L i < searchResults.length {
+    let item = searchResults[i]
+    let content = ''
+    if item.content {
+      content = item.content
+    } else if item.message {
+      content = item.message
+    } else if item.title {
+      content = item.title
+    } else if item.doc_id {
+      content = 'Source #' + item.doc_id.toString()
+    }
+    refs.push({
+      type: sourceType,
+      content: content,
+      score: item.rrf_score || item.score || 0.0,
+      doc_id: item.doc_id || 0
+    })
+    i = i + 1
+  }
+  refs
+}
+
+# ============================================================================
+# RAG 질의 API 호출
+# POST /api/v1/rag/query
+# body: { query, source_type, session_id, top_k }
+# 응답: { query, answer, source_type, session_id, search_results, context }
+# ============================================================================
+
+A F callRagApi(query: str, srcType: str, sid: str) -> Result<any, str> {
+  let token = localStorage.getItem('auth_token') || ''
+  let body = JSON.stringify({
+    query: query,
+    source_type: srcType,
+    session_id: sid,
+    top_k: 5
+  })
+  let resp = Y fetch('/api/v1/rag/query', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + token
+    },
+    body: body
+  })
+  if !resp.ok {
+    let errText = Y resp.text()
+    R Err('API error ' + resp.status.toString() + ': ' + errText)
+  }
+  let data = Y resp.json()
+  R Ok(data)
+}
+
+# ============================================================================
+# 폼 제출 핸들러
+# ============================================================================
+
+A F handleSubmit() {
+  let query = inputText.trim()
+  if str_len(query) === 0 { R }
+  if isLoading { R }
+
+  errorMessage = ''
+  isLoading = true
+
+  # 사용자 메시지 추가
+  let userMsg: ChatMessage = {
+    id: Date.now().toString() + '_user',
+    role: 'user',
+    content: query,
+    timestamp: Date.now(),
+    sources: [],
+    sourceType: ''
+  }
+  messages = [...messages, userMsg]
+  inputText = ''
+
+  # textarea 높이 리셋
+  let el = document.getElementById('chat-input')
+  if el {
+    el.style.height = 'auto'
+  }
+
+  # 스크롤을 맨 아래로
+  setTimeout(scrollToBottom, 50)
+
+  # API 호출
+  let result = Y callRagApi(query, sourceFilter, sessionId)
+
+  M result {
+    Ok(data) => {
+      # 소스 참조 파싱
+      let srefs = parseSourceRefs(data.search_results, sourceFilter)
+
+      # AI 응답 메시지 추가
+      let aiMsg: ChatMessage = {
+        id: Date.now().toString() + '_ai',
+        role: 'assistant',
+        content: data.answer || t('ai.noAnswer'),
+        timestamp: Date.now(),
+        sources: srefs,
+        sourceType: data.source_type || sourceFilter
+      }
+      messages = [...messages, aiMsg]
+    }
+    Err(err) => {
+      errorMessage = err
+      # 에러 시 사용자 메시지를 입력창으로 복원
+      inputText = query
+    }
+  }
+
+  isLoading = false
+
+  # 스크롤을 맨 아래로
+  setTimeout(scrollToBottom, 100)
+}
+</script>
+
+<style scoped>
+/* ============================================================
+   AI 페이지 레이아웃
+   ============================================================ */
+.ai-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 60px);
+  overflow: hidden;
+  padding: 0;
+}
+
+/* ============================================================
+   페이지 헤더
+   ============================================================ */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 16px;
+  flex-shrink: 0;
+  gap: 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.header-info {
+  min-width: 0;
+}
+
+.page-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 2px;
+  letter-spacing: -0.3px;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
+   소스 타입 필터
+   ============================================================ */
+.source-filter {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  background: var(--color-surface);
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  transition: background 0.15s, color 0.15s;
+  border-right: 1px solid var(--color-border);
+}
+
+.filter-btn:last-child {
+  border-right: none;
+}
+
+.filter-btn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.filter-btn.active {
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+}
+
+.filter-icon {
+  font-size: 13px;
+}
+
+.filter-label {
+  white-space: nowrap;
+}
+
+/* ============================================================
+   액션 버튼
+   ============================================================ */
+.action-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.action-btn:hover:not(:disabled) {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-hover);
+}
+
+.action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.new-chat-btn:hover:not(:disabled) {
+  background: var(--color-primary-muted);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.action-icon {
+  font-size: 12px;
+}
+
+/* ============================================================
+   채팅 컨테이너
+   ============================================================ */
+.chat-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+/* ============================================================
+   메시지 영역
+   ============================================================ */
+.messages-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  scroll-behavior: smooth;
+}
+
+/* ============================================================
+   빈 상태
+   ============================================================ */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  text-align: center;
+  padding: 60px 24px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.empty-icon {
+  font-size: 48px;
+  color: var(--color-primary);
+  margin-bottom: 16px;
+  opacity: 0.7;
+}
+
+.empty-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 8px;
+  letter-spacing: -0.3px;
+}
+
+.empty-desc {
+  font-size: 14px;
+  color: var(--color-text-secondary);
+  margin: 0 0 28px;
+  line-height: 1.6;
+}
+
+.example-queries {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.example-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.example-btn:hover {
+  background: var(--color-primary-muted);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.example-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  color: var(--color-primary);
+}
+
+/* ============================================================
+   메시지 행
+   ============================================================ */
+.message-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 860px;
+  width: 100%;
+}
+
+.user-row {
+  flex-direction: row-reverse;
+  margin-left: auto;
+}
+
+.ai-row {
+  flex-direction: row;
+  margin-right: auto;
+}
+
+/* ============================================================
+   아바타
+   ============================================================ */
+.message-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.user-avatar {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.ai-avatar {
+  background: linear-gradient(135deg, #6366f1 0%, #818cf8 100%);
+  color: #ffffff;
+  font-size: 16px;
+}
+
+/* ============================================================
+   말풍선
+   ============================================================ */
+.message-bubble {
+  max-width: 75%;
+  border-radius: 14px;
+  padding: 14px 16px;
+  position: relative;
+}
+
+.user-bubble {
+  background: var(--color-primary);
+  color: #ffffff;
+  border-bottom-right-radius: 4px;
+}
+
+.ai-bubble {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+  border-bottom-left-radius: 4px;
+}
+
+.message-content {
+  font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ============================================================
+   메시지 메타
+   ============================================================ */
+.message-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.message-time {
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+.user-bubble .message-time {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.ai-bubble .message-time {
+  color: var(--color-text-muted);
+}
+
+.message-source-type {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.source-type-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   소스 참조
+   ============================================================ */
+.sources-section {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.sources-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.sources-icon {
+  font-size: 13px;
+  color: var(--color-primary);
+}
+
+.sources-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.source-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.source-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  flex-shrink: 0;
+}
+
+.source-log .source-badge {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-success);
+}
+
+.source-incident .source-badge {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger);
+}
+
+.source-metric .source-badge {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--color-info);
+}
+
+.source-rank {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.source-text {
+  flex: 1;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  word-break: break-word;
+  min-width: 0;
+}
+
+.source-score {
+  font-size: 10px;
+  color: var(--color-text-muted);
+  font-family: monospace;
+  flex-shrink: 0;
+  align-self: flex-end;
+}
+
+/* ============================================================
+   타이핑 인디케이터
+   ============================================================ */
+.typing-bubble {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+}
+
+.typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: bounce 1.2s infinite;
+}
+
+.dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes bounce {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+  30%            { transform: translateY(-6px); opacity: 1; }
+}
+
+.typing-label {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-style: italic;
+}
+
+/* ============================================================
+   입력 영역
+   ============================================================ */
+.input-area {
+  flex-shrink: 0;
+  padding: 12px 24px 20px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+/* ============================================================
+   세션 정보 표시
+   ============================================================ */
+.session-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.session-icon {
+  color: var(--color-primary);
+  font-size: 12px;
+}
+
+.session-id {
+  font-family: monospace;
+  letter-spacing: 0.03em;
+}
+
+.session-filter {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.filter-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.filter-tag.filter-log {
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--color-success);
+}
+
+.filter-tag.filter-incident {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--color-danger);
+}
+
+.filter-tag.filter-metric {
+  background: rgba(59, 130, 246, 0.1);
+  color: var(--color-info);
+}
+
+/* ============================================================
+   에러 배너
+   ============================================================ */
+.error-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+  background: var(--color-danger-muted);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--color-danger);
+}
+
+.error-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.error-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-danger);
+  font-size: 13px;
+  padding: 0 4px;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.error-close:hover {
+  opacity: 1;
+}
+
+/* ============================================================
+   입력 폼
+   ============================================================ */
+.input-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.input-wrapper {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 10px 10px 10px 16px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.input-wrapper:focus-within {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+.chat-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  font-size: 14px;
+  color: var(--color-text-primary);
+  line-height: 1.6;
+  min-height: 24px;
+  max-height: 160px;
+  overflow-y: auto;
+  font-family: inherit;
+}
+
+.chat-input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.chat-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.send-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  border: none;
+  background: var(--color-primary);
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, transform 0.1s;
+}
+
+.send-btn:hover:not(:disabled) {
+  background: #4f46e5;
+}
+
+.send-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.send-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.send-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.input-hint {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding: 0 4px;
+}
+
+/* ============================================================
+   반응형
+   ============================================================ */
+@media (max-width: 768px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .header-actions {
+    width: 100%;
+  }
+
+  .messages-area {
+    padding: 16px;
+  }
+
+  .message-bubble {
+    max-width: 90%;
+  }
+
+  .input-area {
+    padding: 10px 16px 16px;
+  }
+
+  .filter-label {
+    display: none;
+  }
+
+  .action-btn span:last-child {
+    display: none;
+  }
+}
+</style>

@@ -1,0 +1,1435 @@
+<template>
+  <div class="graph-page">
+    <!-- 페이지 헤더 -->
+    <div class="page-header">
+      <div class="header-info">
+        <h2 class="page-title">{t('graph.title')}</h2>
+        <p class="page-subtitle">{t('graph.subtitle')}</p>
+      </div>
+      <div class="header-stats">
+        <div class="stat-chip">
+          <span class="stat-dot dot-healthy"></span>
+          <span class="stat-label">{healthyCount} {t('dashboard.healthyServices')}</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-dot dot-warning"></span>
+          <span class="stat-label">{degradedCount} {t('dashboard.degradedServices')}</span>
+        </div>
+        <div class="stat-chip">
+          <span class="stat-dot dot-danger"></span>
+          <span class="stat-label">{downCount} {t('dashboard.downServices')}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 사이클 감지 배너 -->
+    {#if hasCycle}
+      <div class="cycle-banner banner-warning">
+        <span class="banner-icon">⚠</span>
+        <span>{t('graph.cyclesFound')}</span>
+      </div>
+    {:else if !loading && nodes.length > 0}
+      <div class="cycle-banner banner-ok">
+        <span class="banner-icon">✓</span>
+        <span>{t('graph.noCycles')}</span>
+      </div>
+    {/if}
+
+    <!-- 메인 그래프 영역 -->
+    <div class="graph-container">
+      <!-- 캔버스/SVG 뷰포트 -->
+      <div
+        class="graph-viewport"
+        @mousedown="handleViewportMouseDown"
+        @mousemove="handleViewportMouseMove"
+        @mouseup="handleViewportMouseUp"
+        @mouseleave="handleViewportMouseUp"
+        @wheel|preventDefault="handleWheel"
+      >
+        {#if loading}
+          <div class="graph-loading">
+            <div class="spinner"></div>
+            <span>{t('common.loading')}</span>
+          </div>
+        {:else if error}
+          <div class="graph-error">
+            <span class="error-icon">⚠</span>
+            <span>{error}</span>
+            <button class="btn btn-secondary" @click="loadGraph">{t('common.retry')}</button>
+          </div>
+        {:else if nodes.length === 0}
+          <div class="graph-empty">
+            <span class="empty-icon">⬡</span>
+            <span>{t('common.noData')}</span>
+          </div>
+        {:else}
+          <!-- SVG 그래프 렌더링 -->
+          <svg
+            id="graph-svg"
+            class="graph-svg"
+            style="transform: translate({panX}px, {panY}px) scale({zoom}); transform-origin: 0 0;"
+          >
+            <!-- 화살표 마커 정의 -->
+            <defs>
+              <marker id="arrow-default" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-border-hover)" />
+              </marker>
+              <marker id="arrow-highlighted" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--color-primary)" />
+              </marker>
+            </defs>
+
+            <!-- 엣지 레이어 -->
+            <g class="edges-layer">
+              {#each edges as edge}
+                <g class="edge-group" class:highlighted={isEdgeHighlighted(edge)}>
+                  <line
+                    class="edge-line"
+                    x1={getNodeX(edge.from_id)}
+                    y1={getNodeY(edge.from_id)}
+                    x2={getEdgeEndX(edge)}
+                    y2={getEdgeEndY(edge)}
+                    marker-end={isEdgeHighlighted(edge) ? 'url(#arrow-highlighted)' : 'url(#arrow-default)'}
+                  />
+                  <!-- 엣지 타입 라벨 -->
+                  <text
+                    class="edge-label"
+                    x={(getNodeX(edge.from_id) + getNodeX(edge.to_id)) / 2}
+                    y={(getNodeY(edge.from_id) + getNodeY(edge.to_id)) / 2 - 6}
+                  >{edge.edge_type}</text>
+                </g>
+              {/each}
+            </g>
+
+            <!-- 노드 레이어 -->
+            <g class="nodes-layer">
+              {#each nodes as node}
+                <g
+                  class="node-group"
+                  class:selected={selectedNode && selectedNode.id === node.id}
+                  class:entering={node.entering}
+                  class:exiting={node.exiting}
+                  transform="translate({node.x}, {node.y})"
+                  @mousedown={e => handleNodeMouseDown(e, node)}
+                  @click={e => handleNodeClick(e, node)}
+                  style="cursor: grab;"
+                >
+                  <!-- 노드 그림자 -->
+                  <circle
+                    class="node-shadow"
+                    r="26"
+                    cx="2"
+                    cy="3"
+                  />
+                  <!-- 노드 원형 배경 -->
+                  <circle
+                    class="node-circle"
+                    r="24"
+                    fill={getNodeColor(node.status)}
+                    stroke={getNodeStroke(node.status)}
+                    stroke-width="2.5"
+                  />
+                  <!-- 상태 인디케이터 도트 -->
+                  <circle
+                    class="status-dot"
+                    r="5"
+                    cx="16"
+                    cy="-16"
+                    fill={getStatusDotColor(node.status)}
+                    stroke="var(--color-surface)"
+                    stroke-width="1.5"
+                  />
+                  <!-- 서비스 아이콘 -->
+                  <text
+                    class="node-icon"
+                    text-anchor="middle"
+                    dominant-baseline="central"
+                    y="0"
+                  >◈</text>
+                  <!-- 서비스명 라벨 -->
+                  <text
+                    class="node-label"
+                    text-anchor="middle"
+                    y="38"
+                  >{node.name}</text>
+                </g>
+              {/each}
+            </g>
+          </svg>
+        {/if}
+      </div>
+
+      <!-- 줌/리셋 컨트롤 -->
+      <div class="graph-controls">
+        <button class="ctrl-btn" @click="handleZoomIn" title="+">
+          <span>+</span>
+        </button>
+        <span class="zoom-label">{Math.round(zoom * 100)}%</span>
+        <button class="ctrl-btn" @click="handleZoomOut" title="-">
+          <span>-</span>
+        </button>
+        <div class="ctrl-divider"></div>
+        <button class="ctrl-btn" @click="handleReset" title={t('common.reset')}>
+          <span>⟲</span>
+        </button>
+        <button class="ctrl-btn" @click="loadGraph" title={t('common.refresh')}>
+          <span>↺</span>
+        </button>
+      </div>
+
+      <!-- 물리 시뮬레이션 상태 표시 -->
+      {#if simulating}
+        <div class="sim-badge">
+          <span class="sim-dot"></span>
+          <span>Simulating</span>
+        </div>
+      {/if}
+    </div>
+
+    <!-- 노드 상세 패널 -->
+    {#if selectedNode}
+      <div class="detail-panel">
+        <div class="panel-header">
+          <div class="panel-title-row">
+            <div class="panel-status-dot" style="background: {getStatusDotColor(selectedNode.status)};"></div>
+            <h3 class="panel-title">{selectedNode.name}</h3>
+          </div>
+          <button class="panel-close" @click="closePanel">✕</button>
+        </div>
+
+        <div class="panel-body">
+          <div class="panel-row">
+            <span class="panel-key">{t('common.id')}</span>
+            <span class="panel-value mono">#{selectedNode.id}</span>
+          </div>
+          <div class="panel-row">
+            <span class="panel-key">{t('common.status')}</span>
+            <span class="panel-value">
+              <span class="status-badge" style="background: {getStatusBadgeBg(selectedNode.status)}; color: {getStatusDotColor(selectedNode.status)};">
+                {getStatusLabel(selectedNode.status)}
+              </span>
+            </span>
+          </div>
+          <div class="panel-row">
+            <span class="panel-key">{t('services.dependencies')}</span>
+            <span class="panel-value">{getNodeDependencyCount(selectedNode.id)} {t('common.total')}</span>
+          </div>
+          <div class="panel-row">
+            <span class="panel-key">{t('graph.dependents')}</span>
+            <span class="panel-value">{getNodeDependentCount(selectedNode.id)} {t('common.total')}</span>
+          </div>
+        </div>
+
+        <div class="panel-footer">
+          <button class="btn btn-primary btn-sm" @click="handleImpactAnalysis(selectedNode.id)">
+            {t('graph.impactAnalysis')}
+          </button>
+          <button class="btn btn-secondary btn-sm" @click="navigateToService(selectedNode.id)">
+            {t('common.detail')}
+          </button>
+        </div>
+
+        <!-- 영향 분석 결과 -->
+        {#if impactResult && impactResult.failed_service_id === selectedNode.id}
+          <div class="impact-section">
+            <h4 class="impact-title">{t('graph.impactAnalysis')}</h4>
+            {#if impactResult.impacted_count > 0}
+              <div class="impact-list">
+                {#each impactResult.impacted as imp}
+                  <div class="impact-item">
+                    <span class="impact-dot" style="background: {getStatusDotColor(imp.status)};"></span>
+                    <span class="impact-name">{imp.name}</span>
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <p class="impact-empty">{t('incidents.noImpacted')}</p>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+</template>
+
+<script>
+import { t } from '../i18n.vais'
+
+# ============================================================================
+# 상수
+# ============================================================================
+const NODE_RADIUS = 24
+const SPRING_LENGTH = 160       # 자연 길이
+const SPRING_K = 0.04           # 스프링 상수
+const REPULSION = 6000          # 척력 계수
+const DAMPING = 0.78            # 감쇠 계수
+const MIN_VELOCITY = 0.08       # 정지 판정 최소 속도
+const SIM_ITERATIONS = 1        # 프레임당 시뮬레이션 반복 횟수
+const ZOOM_STEP = 0.15
+const ZOOM_MIN = 0.2
+const ZOOM_MAX = 3.0
+const TRANSITION_DURATION = 400 # 노드 진입/퇴장 애니메이션 ms
+
+# ============================================================================
+# 상태
+# ============================================================================
+let nodes = []         # { id, name, status, x, y, vx, vy, fx, fy, entering, exiting, pinned }
+let edges = []         # { from_id, to_id, edge_type }
+let loading = false
+let error = ''
+
+# 뷰포트 변환
+let zoom = 1.0
+let panX = 0
+let panY = 0
+
+# 드래그 상태
+let isPanning = false
+let isDragging = false
+let dragNode = null
+let dragStartX = 0
+let dragStartY = 0
+let panStartX = 0
+let panStartY = 0
+
+# 선택된 노드
+let selectedNode = null
+
+# 물리 시뮬레이션
+let simulating = false
+let animFrameId = null
+
+# 영향 분석 결과
+let impactResult = null
+
+# 사이클 감지
+let hasCycle = false
+
+# 통계
+let healthyCount = 0
+let degradedCount = 0
+let downCount = 0
+
+# ============================================================================
+# API 호출
+# ============================================================================
+
+A F loadGraph() {
+  loading = true
+  error = ''
+  selectedNode = null
+  impactResult = null
+
+  let resp = Y fetch('/api/v1/services/graph', {
+    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('auth_token') }
+  })
+  if !resp.ok {
+    error = t('graph.loadError')
+    loading = false
+    R
+  }
+
+  let data = Y resp.json()
+  let rawNodes = data.nodes || []
+  let rawEdges = data.edges || []
+
+  # 기존 노드 위치 보존 (재로드 시)
+  let prevPositions = {}
+  for (let n of nodes) {
+    prevPositions[n.id] = { x: n.x, y: n.y }
+  }
+
+  # 노드 초기화: 진입 트랜지션 포함
+  let svgW = getSvgWidth()
+  let svgH = getSvgHeight()
+  let cx = svgW / 2
+  let cy = svgH / 2
+
+  let newNodes = rawNodes.map(function(n, i) {
+    let prev = prevPositions[n.id]
+    let angle = (i / Math.max(rawNodes.length, 1)) * Math.PI * 2
+    let radius = Math.min(svgW, svgH) * 0.28
+    let initX = prev ? prev.x : cx + Math.cos(angle) * radius
+    let initY = prev ? prev.y : cy + Math.sin(angle) * radius
+    return {
+      id: n.id,
+      name: n.name,
+      status: n.status || 'unknown',
+      x: initX,
+      y: initY,
+      vx: 0,
+      vy: 0,
+      fx: 0,
+      fy: 0,
+      entering: !prev,
+      exiting: false,
+      pinned: false
+    }
+  })
+
+  nodes = newNodes
+  edges = rawEdges
+
+  # 통계 계산
+  updateStats()
+
+  # 사이클 감지 API 호출
+  loadCycleDetection()
+
+  loading = false
+
+  # 물리 시뮬레이션 시작
+  startSimulation()
+
+  # 진입 트랜지션 클리어
+  setTimeout(function() {
+    nodes = nodes.map(function(n) {
+      return Object.assign({}, n, { entering: false })
+    })
+  }, TRANSITION_DURATION)
+}
+
+A F loadCycleDetection() {
+  let resp = Y fetch('/api/v1/services/graph/cycles', {
+    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('auth_token') }
+  })
+  if !resp.ok {
+    error = t('graph.loadError')
+    R
+  }
+  if resp.ok {
+    let data = Y resp.json()
+    hasCycle = data.has_cycle === true || data.has_cycle === 'true'
+  }
+}
+
+A F handleImpactAnalysis(serviceId) {
+  let resp = Y fetch('/api/v1/services/' + serviceId + '/impact', {
+    headers: { 'Authorization': 'Bearer ' + localStorage.getItem('auth_token') }
+  })
+  if !resp.ok {
+    error = t('graph.loadError')
+    R
+  }
+  if resp.ok {
+    let data = Y resp.json()
+    impactResult = data
+  }
+}
+
+# ============================================================================
+# SVG 크기 유틸
+# ============================================================================
+
+F getSvgWidth() -> f64 {
+  let el = document.querySelector('.graph-viewport')
+  if el { R el.clientWidth || 800 }
+  R 800
+}
+
+F getSvgHeight() -> f64 {
+  let el = document.querySelector('.graph-viewport')
+  if el { R el.clientHeight || 600 }
+  R 600
+}
+
+# ============================================================================
+# Spring 물리 시뮬레이션
+# ============================================================================
+
+F startSimulation() {
+  if animFrameId {
+    cancelAnimationFrame(animFrameId)
+    animFrameId = null
+  }
+  simulating = true
+  scheduleFrame()
+}
+
+F stopSimulation() {
+  if animFrameId {
+    cancelAnimationFrame(animFrameId)
+    animFrameId = null
+  }
+  simulating = false
+}
+
+F scheduleFrame() {
+  animFrameId = requestAnimationFrame(function() {
+    let i = 0
+    LW i < SIM_ITERATIONS {
+      simulateStep()
+      i = i + 1
+    }
+    # 최대 속도 확인 — 충분히 느리면 정지
+    let maxV = 0
+    for (let n of nodes) {
+      let spd = Math.sqrt(n.vx * n.vx + n.vy * n.vy)
+      if spd > maxV { maxV = spd }
+    }
+    if maxV > MIN_VELOCITY {
+      scheduleFrame()
+    } else {
+      simulating = false
+      animFrameId = null
+    }
+  })
+}
+
+F simulateStep() {
+  let svgW = getSvgWidth()
+  let svgH = getSvgHeight()
+  let n = nodes.length
+
+  # 1. 척력 (Coulomb): 모든 노드 쌍 간
+  for (let i = 0; i < n; i++) {
+    nodes[i].fx = 0
+    nodes[i].fy = 0
+  }
+
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      let dx = nodes[i].x - nodes[j].x
+      let dy = nodes[i].y - nodes[j].y
+      let dist2 = dx * dx + dy * dy
+      if dist2 < 1 { dist2 = 1 }
+      let dist = Math.sqrt(dist2)
+      let force = REPULSION / dist2
+      let fx = force * dx / dist
+      let fy = force * dy / dist
+      nodes[i].fx = nodes[i].fx + fx
+      nodes[i].fy = nodes[i].fy + fy
+      nodes[j].fx = nodes[j].fx - fx
+      nodes[j].fy = nodes[j].fy - fy
+    }
+  }
+
+  # 2. 인력 (Hook): 엣지 스프링
+  for (let e of edges) {
+    let ni = nodes.findIndex(function(nd) { R nd.id === e.from_id })
+    let nj = nodes.findIndex(function(nd) { R nd.id === e.to_id })
+    if ni < 0 || nj < 0 { continue }
+
+    let dx = nodes[nj].x - nodes[ni].x
+    let dy = nodes[nj].y - nodes[ni].y
+    let dist = Math.sqrt(dx * dx + dy * dy)
+    if dist < 1 { dist = 1 }
+    let stretch = dist - SPRING_LENGTH
+    let force = SPRING_K * stretch
+    let fx = force * dx / dist
+    let fy = force * dy / dist
+    nodes[ni].fx = nodes[ni].fx + fx
+    nodes[ni].fy = nodes[ni].fy + fy
+    nodes[nj].fx = nodes[nj].fx - fx
+    nodes[nj].fy = nodes[nj].fy - fy
+  }
+
+  # 3. 중앙 인력 (중력) — 노드가 뷰포트 밖으로 이탈 방지
+  let centerX = svgW / 2
+  let centerY = svgH / 2
+  for (let nd of nodes) {
+    let dx = centerX - nd.x
+    let dy = centerY - nd.y
+    nd.fx = nd.fx + dx * 0.006
+    nd.fy = nd.fy + dy * 0.006
+  }
+
+  # 4. 속도 업데이트 + 위치 갱신
+  for (let nd of nodes) {
+    if nd.pinned { continue }
+    nd.vx = (nd.vx + nd.fx) * DAMPING
+    nd.vy = (nd.vy + nd.fy) * DAMPING
+    nd.x = nd.x + nd.vx
+    nd.y = nd.y + nd.vy
+
+    # 경계 제한
+    let margin = NODE_RADIUS + 10
+    if nd.x < margin { nd.x = margin; nd.vx = nd.vx * -0.3 }
+    if nd.y < margin { nd.y = margin; nd.vy = nd.vy * -0.3 }
+    if nd.x > svgW - margin { nd.x = svgW - margin; nd.vx = nd.vx * -0.3 }
+    if nd.y > svgH - margin { nd.y = svgH - margin; nd.vy = nd.vy * -0.3 }
+  }
+
+  # 반응형 업데이트 트리거
+  nodes = nodes
+}
+
+# ============================================================================
+# 노드 색상 유틸
+# ============================================================================
+
+F getNodeColor(status: str) -> str {
+  M status {
+    'healthy' => 'rgba(16, 185, 129, 0.12)',
+    'degraded' => 'rgba(245, 158, 11, 0.12)',
+    'down' => 'rgba(239, 68, 68, 0.12)',
+    _ => 'rgba(107, 114, 128, 0.1)'
+  }
+}
+
+F getNodeStroke(status: str) -> str {
+  M status {
+    'healthy' => 'var(--color-success)',
+    'degraded' => 'var(--color-warning)',
+    'down' => 'var(--color-danger)',
+    _ => 'var(--color-border)'
+  }
+}
+
+F getStatusDotColor(status: str) -> str {
+  M status {
+    'healthy' => '#10b981',
+    'degraded' => '#f59e0b',
+    'down' => '#ef4444',
+    _ => '#9ca3af'
+  }
+}
+
+F getStatusBadgeBg(status: str) -> str {
+  M status {
+    'healthy' => 'rgba(16, 185, 129, 0.1)',
+    'degraded' => 'rgba(245, 158, 11, 0.1)',
+    'down' => 'rgba(239, 68, 68, 0.1)',
+    _ => 'rgba(107, 114, 128, 0.1)'
+  }
+}
+
+F getStatusLabel(status: str) -> str {
+  M status {
+    'healthy' => t('services.status.healthy'),
+    'degraded' => t('services.status.degraded'),
+    'down' => t('services.status.down'),
+    _ => t('services.status.unknown')
+  }
+}
+
+# ============================================================================
+# 엣지 좌표 유틸
+# ============================================================================
+
+F getNodeX(nodeId) -> f64 {
+  let nd = nodes.find(function(n) { R n.id === nodeId })
+  if nd { R nd.x }
+  R 0
+}
+
+F getNodeY(nodeId) -> f64 {
+  let nd = nodes.find(function(n) { R n.id === nodeId })
+  if nd { R nd.y }
+  R 0
+}
+
+# 화살표가 노드 원 테두리에 닿도록 끝점 계산
+F getEdgeEndX(edge) -> f64 {
+  let x1 = getNodeX(edge.from_id)
+  let y1 = getNodeY(edge.from_id)
+  let x2 = getNodeX(edge.to_id)
+  let y2 = getNodeY(edge.to_id)
+  let dx = x2 - x1
+  let dy = y2 - y1
+  let dist = Math.sqrt(dx * dx + dy * dy)
+  if dist < 1 { R x2 }
+  R x2 - (dx / dist) * (NODE_RADIUS + 4)
+}
+
+F getEdgeEndY(edge) -> f64 {
+  let x1 = getNodeX(edge.from_id)
+  let y1 = getNodeY(edge.from_id)
+  let x2 = getNodeX(edge.to_id)
+  let y2 = getNodeY(edge.to_id)
+  let dx = x2 - x1
+  let dy = y2 - y1
+  let dist = Math.sqrt(dx * dx + dy * dy)
+  if dist < 1 { R y2 }
+  R y2 - (dy / dist) * (NODE_RADIUS + 4)
+}
+
+F isEdgeHighlighted(edge) -> bool {
+  if !selectedNode { R false }
+  R edge.from_id === selectedNode.id || edge.to_id === selectedNode.id
+}
+
+# ============================================================================
+# 통계 계산
+# ============================================================================
+
+F updateStats() {
+  healthyCount = nodes.filter(function(n) { R n.status === 'healthy' }).length
+  degradedCount = nodes.filter(function(n) { R n.status === 'degraded' }).length
+  downCount = nodes.filter(function(n) { R n.status === 'down' }).length
+}
+
+F getNodeDependencyCount(nodeId) -> i64 {
+  R edges.filter(function(e) { R e.from_id === nodeId }).length
+}
+
+F getNodeDependentCount(nodeId) -> i64 {
+  R edges.filter(function(e) { R e.to_id === nodeId }).length
+}
+
+# ============================================================================
+# 인터랙션 핸들러
+# ============================================================================
+
+F handleNodeMouseDown(e, node) {
+  e.stopPropagation()
+  e.preventDefault()
+  isDragging = true
+  dragNode = node
+
+  # 드래그 중 시뮬레이션 일시 중지 및 핀 고정
+  node.pinned = true
+  if animFrameId {
+    cancelAnimationFrame(animFrameId)
+    animFrameId = null
+  }
+
+  # SVG 좌표로 변환
+  let svgPt = screenToSvg(e.clientX, e.clientY)
+  dragStartX = svgPt.x - node.x
+  dragStartY = svgPt.y - node.y
+}
+
+F handleViewportMouseDown(e) {
+  if isDragging { R }
+  if e.button !== 0 { R }
+  isPanning = true
+  panStartX = e.clientX - panX
+  panStartY = e.clientY - panY
+}
+
+F handleViewportMouseMove(e) {
+  if isDragging && dragNode {
+    let svgPt = screenToSvg(e.clientX, e.clientY)
+    dragNode.x = svgPt.x - dragStartX
+    dragNode.y = svgPt.y - dragStartY
+    dragNode.vx = 0
+    dragNode.vy = 0
+    nodes = nodes
+    R
+  }
+  if isPanning {
+    panX = e.clientX - panStartX
+    panY = e.clientY - panStartY
+  }
+}
+
+F handleViewportMouseUp(e) {
+  if isDragging && dragNode {
+    dragNode.pinned = false
+    dragNode = null
+    isDragging = false
+    # 드래그 후 시뮬레이션 재개
+    startSimulation()
+    R
+  }
+  isPanning = false
+}
+
+F handleNodeClick(e, node) {
+  e.stopPropagation()
+  if isDragging { R }
+  selectedNode = node
+  impactResult = null
+}
+
+F handleWheel(e) {
+  let delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP
+  let newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, zoom + delta))
+
+  # 마우스 위치 기준 줌
+  let rect = document.querySelector('.graph-viewport').getBoundingClientRect()
+  let mouseX = e.clientX - rect.left
+  let mouseY = e.clientY - rect.top
+
+  let scaleRatio = newZoom / zoom
+  panX = mouseX - scaleRatio * (mouseX - panX)
+  panY = mouseY - scaleRatio * (mouseY - panY)
+  zoom = newZoom
+}
+
+F handleZoomIn() {
+  let newZoom = Math.min(ZOOM_MAX, zoom + ZOOM_STEP)
+  let svgW = getSvgWidth()
+  let svgH = getSvgHeight()
+  let cx = svgW / 2
+  let cy = svgH / 2
+  let scaleRatio = newZoom / zoom
+  panX = cx - scaleRatio * (cx - panX)
+  panY = cy - scaleRatio * (cy - panY)
+  zoom = newZoom
+}
+
+F handleZoomOut() {
+  let newZoom = Math.max(ZOOM_MIN, zoom - ZOOM_STEP)
+  let svgW = getSvgWidth()
+  let svgH = getSvgHeight()
+  let cx = svgW / 2
+  let cy = svgH / 2
+  let scaleRatio = newZoom / zoom
+  panX = cx - scaleRatio * (cx - panX)
+  panY = cy - scaleRatio * (cy - panY)
+  zoom = newZoom
+}
+
+F handleReset() {
+  zoom = 1.0
+  panX = 0
+  panY = 0
+  selectedNode = null
+  impactResult = null
+  # 노드 재배치
+  let svgW = getSvgWidth()
+  let svgH = getSvgHeight()
+  let cx = svgW / 2
+  let cy = svgH / 2
+  nodes = nodes.map(function(n, i) {
+    let angle = (i / Math.max(nodes.length, 1)) * Math.PI * 2
+    let radius = Math.min(svgW, svgH) * 0.28
+    return Object.assign({}, n, {
+      x: cx + Math.cos(angle) * radius,
+      y: cy + Math.sin(angle) * radius,
+      vx: 0,
+      vy: 0
+    })
+  })
+  startSimulation()
+}
+
+F closePanel() {
+  selectedNode = null
+  impactResult = null
+}
+
+F navigateToService(serviceId) {
+  window.router.navigate('/services/' + serviceId)
+}
+
+# ============================================================================
+# 좌표 변환 유틸
+# ============================================================================
+
+F screenToSvg(screenX, screenY) {
+  let el = document.querySelector('.graph-viewport')
+  if !el { R { x: screenX, y: screenY } }
+  let rect = el.getBoundingClientRect()
+  let localX = screenX - rect.left
+  let localY = screenY - rect.top
+  R {
+    x: (localX - panX) / zoom,
+    y: (localY - panY) / zoom
+  }
+}
+
+# ============================================================================
+# 초기화
+# ============================================================================
+loadGraph()
+
+# 뷰포트 리사이즈 감지 — 시뮬레이션 재개
+window.addEventListener('resize', function() {
+  if !simulating && nodes.length > 0 {
+    startSimulation()
+  }
+})
+
+# 언마운트 시 시뮬레이션 정지
+D {
+  stopSimulation()
+}
+</script>
+
+<style scoped>
+.graph-page {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  min-height: 0;
+}
+
+/* 페이지 헤더 */
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0 0 4px;
+  letter-spacing: -0.3px;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin: 0;
+}
+
+.header-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.stat-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.stat-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-healthy { background: #10b981; }
+.dot-warning { background: #f59e0b; }
+.dot-danger  { background: #ef4444; }
+
+/* 사이클 감지 배너 */
+.cycle-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.banner-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.banner-ok {
+  background: rgba(16, 185, 129, 0.08);
+  color: #059669;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+
+.banner-icon {
+  font-size: 15px;
+}
+
+/* 메인 그래프 컨테이너 */
+.graph-container {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+/* 뷰포트 */
+.graph-viewport {
+  width: 100%;
+  height: 100%;
+  min-height: 480px;
+  overflow: hidden;
+  position: relative;
+  background:
+    radial-gradient(circle at 50% 50%, transparent 0%, transparent 100%),
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 39px,
+      var(--color-border) 39px,
+      var(--color-border) 40px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent,
+      transparent 39px,
+      var(--color-border) 39px,
+      var(--color-border) 40px
+    );
+  background-color: var(--color-bg);
+  cursor: grab;
+}
+
+.graph-viewport:active {
+  cursor: grabbing;
+}
+
+/* SVG */
+.graph-svg {
+  width: 100%;
+  height: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform;
+}
+
+/* 엣지 */
+.edge-line {
+  stroke: var(--color-border-hover);
+  stroke-width: 1.5;
+  fill: none;
+  transition: stroke 0.2s;
+}
+
+.edge-group.highlighted .edge-line {
+  stroke: var(--color-primary);
+  stroke-width: 2.5;
+}
+
+.edge-label {
+  font-size: 10px;
+  fill: var(--color-text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+
+.edge-group.highlighted .edge-label {
+  fill: var(--color-primary);
+  font-weight: 600;
+}
+
+/* 노드 */
+.node-group {
+  transition: opacity 0.3s, filter 0.2s;
+}
+
+.node-group.entering {
+  animation: node-enter 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.node-group.exiting {
+  animation: node-exit 0.35s ease-in forwards;
+}
+
+.node-group.selected .node-circle {
+  filter: drop-shadow(0 0 10px rgba(99, 102, 241, 0.6));
+  stroke: var(--color-primary) !important;
+  stroke-width: 3 !important;
+}
+
+.node-shadow {
+  fill: rgba(0, 0, 0, 0.08);
+  pointer-events: none;
+}
+
+.node-circle {
+  transition: fill 0.3s, stroke 0.2s;
+}
+
+.node-icon {
+  font-size: 16px;
+  fill: var(--color-text-secondary);
+  pointer-events: none;
+  user-select: none;
+}
+
+.node-group.selected .node-icon {
+  fill: var(--color-primary);
+}
+
+.node-label {
+  font-size: 11px;
+  font-weight: 600;
+  fill: var(--color-text-primary);
+  pointer-events: none;
+  user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.status-dot {
+  transition: fill 0.3s;
+}
+
+/* 로딩 / 에러 / 빈 화면 */
+.graph-loading,
+.graph-error,
+.graph-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: var(--color-text-secondary);
+  font-size: 14px;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.error-icon,
+.empty-icon {
+  font-size: 32px;
+  opacity: 0.4;
+}
+
+/* 컨트롤 패널 */
+.graph-controls {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 8px 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  z-index: 20;
+}
+
+.ctrl-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--color-text-secondary);
+  transition: background 0.15s, color 0.15s;
+  font-weight: 600;
+}
+
+.ctrl-btn:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.zoom-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  line-height: 1;
+  min-width: 32px;
+  text-align: center;
+}
+
+.ctrl-divider {
+  width: 20px;
+  height: 1px;
+  background: var(--color-border);
+  margin: 2px 0;
+}
+
+/* 시뮬레이션 배지 */
+.sim-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 20px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  z-index: 10;
+  pointer-events: none;
+}
+
+.sim-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+/* 노드 진입/퇴장 애니메이션 */
+@keyframes node-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes node-exit {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+}
+
+/* 상세 패널 */
+.detail-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 260px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  z-index: 30;
+  overflow: hidden;
+  animation: panel-enter 0.22s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes panel-enter {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 14px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.panel-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.panel-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.panel-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 180px;
+}
+
+.panel-close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+
+.panel-close:hover {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+}
+
+.panel-body {
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.panel-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.panel-key {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.panel-value {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+  text-align: right;
+}
+
+.panel-value.mono {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 11px;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.panel-footer {
+  padding: 10px 14px 12px;
+  display: flex;
+  gap: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+/* 버튼 */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.1s;
+  text-decoration: none;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+}
+
+.btn-primary:hover {
+  background: #4f46e5;
+}
+
+.btn-secondary {
+  background: var(--color-hover);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+}
+
+.btn-secondary:hover {
+  background: var(--color-border);
+}
+
+.btn-sm {
+  padding: 6px 10px;
+  font-size: 12px;
+  flex: 1;
+}
+
+/* 영향 분석 섹션 */
+.impact-section {
+  padding: 10px 14px 12px;
+  border-top: 1px solid var(--color-border);
+}
+
+.impact-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin: 0 0 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.impact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.impact-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--color-text-primary);
+}
+
+.impact-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.impact-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.impact-empty {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+/* 반응형 */
+@media (max-width: 640px) {
+  .page-header {
+    flex-direction: column;
+  }
+
+  .detail-panel {
+    left: 8px;
+    right: 8px;
+    width: auto;
+  }
+
+  .graph-viewport {
+    min-height: 320px;
+  }
+}
+</style>

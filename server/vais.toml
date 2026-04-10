@@ -1,0 +1,8 @@
+[package]
+name = "vais-monitor"
+version = "0.1.0"
+
+[dependencies]
+
+[build]
+include_dirs = ["src"]

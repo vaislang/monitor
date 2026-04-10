@@ -1,0 +1,20 @@
+
+F match_route_a(path: str) -> str {
+    I str_starts_with(path, "/api/v1/auth/") { R "auth" }
+    I str_starts_with(path, "/api/v1/services") { R "services" }
+    I str_starts_with(path, "/api/v1/metrics") { R "metrics" }
+    I str_starts_with(path, "/api/v1/logs") { R "logs" }
+    I str_starts_with(path, "/api/v1/alerts") { R "alerts" }
+    R ""
+}
+
+F match_route(path: str) -> str {
+    ra := match_route_a(path)
+    I str_len(ra) > 0 { R ra }
+    I str_starts_with(path, "/api/v1/incidents") { R "incidents" }
+    I str_starts_with(path, "/api/v1/graph") { R "graph" }
+    I str_starts_with(path, "/api/v1/ai") { R "ai" }
+    I str_starts_with(path, "/api/v1/admin") { R "admin" }
+    I str_starts_with(path, "/ws/") { R "websocket" }
+    R ""
+}
