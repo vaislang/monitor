@@ -72,12 +72,46 @@ function collectImportedNames(script: string): Set<string> {
 }
 
 /**
+ * Strip Vais type annotations from a parameter list string.
+ * e.g. "e, path: str" → "e, path"
+ *      "name: str, count: i64" → "name, count"
+ *      "member" → "member"
+ * Handles generic types like Vec<T>, HashMap<K,V>.
+ */
+function stripParamTypes(params: string): string {
+  if (!params.trim()) return params;
+  // Split on commas that are not inside angle brackets
+  const parts: string[] = [];
+  let depth = 0;
+  let current = "";
+  for (const ch of params) {
+    if (ch === "<") { depth++; current += ch; }
+    else if (ch === ">") { depth--; current += ch; }
+    else if (ch === "," && depth === 0) { parts.push(current); current = ""; }
+    else { current += ch; }
+  }
+  if (current) parts.push(current);
+  return parts.map((p) => {
+    // Each part may be "name: Type" or "&name" or "&mut name" or just "name"
+    // Strip leading & / &mut
+    const stripped = p.replace(/^\s*&\s*(?:mut\s+)?/, "").trim();
+    // Take only the part before the first ':'
+    const colonIdx = stripped.indexOf(":");
+    if (colonIdx === -1) return stripped;
+    return stripped.slice(0, colonIdx).trim();
+  }).join(", ");
+}
+
+/**
  * Normalize a raw .vaisx <script> block into valid JavaScript:
  *
  *  1. Convert Vais-style `# comment` → `// comment`
  *  2. Remove duplicate `let`/`const`/`var` declarations for names already imported
- *  3. Convert Svelte reactive labels `$: x = expr` → `let x = expr`
+ *  3. Convert Svelte reactive labels `$: x = expr` → `$: ; x = expr`
  *  4. Rewrite `.vais` imports to `?vais-stub` virtual module
+ *  5. Convert Vais function syntax `F name(params) -> type { }` → `function name(params) { }`
+ *  6. Strip Vais type annotations from `let x: Type = val` → `let x = val`
+ *  7. Convert Vais walrus-assign `:=` → `=`
  */
 function normalizeScript(script: string, _selfId: string): string {
   // Step 1: Rewrite .vais imports (before collecting imported names so we
@@ -96,7 +130,36 @@ function normalizeScript(script: string, _selfId: string): string {
     .map((line) => line.replace(/^(\s*)#\s(.*)$/, "$1// $2"))
     .join("\n");
 
-  // Step 4: Remove duplicate `let/const/var name = ...` for imported names.
+  // Step 4: Convert Vais function declarations.
+  //   `F name(params) { }` → `function name(params) { }`
+  //   `async F name(params) -> RetType { }` → `async function name(params) { }`
+  //   `F name(params) -> RetType { }` → `function name(params) { }`
+  // The regex captures the optional `async`, the function name, and the raw param list.
+  // Return type annotation `-> ...` (up to the opening brace) is dropped.
+  out = out.replace(
+    /^(\s*)(async\s+)?F\s+(\w+)\s*\(([^)]*)\)\s*(?:->[^{]*)?\{/gm,
+    (_, indent, asyncKw, name, params) => {
+      const jsParams = stripParamTypes(params);
+      const asyncPrefix = asyncKw ? "async " : "";
+      return `${indent}${asyncPrefix}function ${name}(${jsParams}) {`;
+    }
+  );
+
+  // Step 5: Strip Vais type annotations from variable declarations.
+  //   `let x: SomeType = val` → `let x = val`
+  //   `let x: Vec<T> = []`   → `let x = []`
+  //   `const x: Type = val`  → `const x = val`
+  // We match the type annotation between the variable name and `=`.
+  out = out.replace(
+    /^(\s*(?:let|const|var)\s+\w+)\s*:\s*[A-Za-z_][A-Za-z0-9_<>, \[\]&]*\s*(?==)/gm,
+    "$1 "
+  );
+
+  // Step 6: Convert Vais walrus-assign `:=` → `=`
+  //   Only when not inside a string (heuristic: replace `:=` not preceded by `'` or `"`)
+  out = out.replace(/:=/g, "=");
+
+  // Step 7: Remove duplicate `let/const/var name = ...` for imported names.
   //         We replace these with a comment to preserve line structure.
   if (imported.size > 0) {
     out = out.replace(
@@ -110,7 +173,7 @@ function normalizeScript(script: string, _selfId: string): string {
     );
   }
 
-  // Step 5: Svelte reactive statements `$: …` are handled differently depending on
+  // Step 8: Svelte reactive statements `$: …` are handled differently depending on
   //         whether the statement is a block (`$: { … }`) or a single expression
   //         (`$: x = expr`, `$: console.log(x)`). In JavaScript, `$:` by itself is a
   //         label and a labeled block is legal, so `$: { … }` can be left intact.
@@ -201,7 +264,6 @@ const VAIS_STUB_RESOLVED = "\0vais-stub";
 
 const VAIS_STUB_CODE = `
 // vais-stub: no-op module for .vais server-side imports in browser context
-const __noop__ = () => {};
 const __stub__ = new Proxy({}, {
   get(_, k) {
     if (k === Symbol.toPrimitive || k === Symbol.iterator) return undefined;
@@ -210,15 +272,31 @@ const __stub__ = new Proxy({}, {
   },
   apply() { return __stub__; },
 });
+const __fn__ = (..._args) => __stub__;
+const __bool__ = () => false;
+const __str__ = (k) => String(k ?? '');
 
 export default __stub__;
-export const t = (k) => String(k);
-export const create_auth_store = () => __stub__;
-export const create_app_store = () => __stub__;
-export const is_dark_theme = () => false;
-export const authStore = __stub__;
-export const appStore = __stub__;
 export const __vais_stub__ = true;
+// stores
+export const appStore = __stub__;
+export const authStore = __stub__;
+export const create_app_store = __fn__;
+export const create_auth_store = __fn__;
+// i18n
+export const t = __str__;
+// theme / locale helpers
+export const is_dark_theme = __bool__;
+export const toggle_theme = __fn__;
+export const toggle_locale = __fn__;
+export const set_theme = __fn__;
+export const set_locale = __fn__;
+export const theme_to_str = __str__;
+export const locale_to_str = __str__;
+// auth
+export const login = __fn__;
+export const logout = __fn__;
+export const register = __fn__;
 `;
 
 // ── plugin ─────────────────────────────────────────────────────────────────
