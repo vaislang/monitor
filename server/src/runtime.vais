@@ -5,10 +5,142 @@ X F server_listen(host: &str, port: i64)
 X F server_stop()
 
 # String utilities
-X F str_len(s: &str) -> i64
-X F str_char_at(s: &str, idx: i64) -> str
-X F str_slice(s: &str, start: i64, end: i64) -> str
-X F str_contains(s: &str, substr: &str) -> bool
+# str_len — pure vais: counts bytes until null terminator via raw pointer arithmetic
+X F __strlen(s: i64) -> i64
+F str_len(s: &str) -> i64 {
+    __strlen(s as i64)
+}
+# str_char_at — pure vais: loads one byte at offset and converts to single-char str
+X F __load_byte(ptr: i64, idx: i64) -> i64
+F str_char_at(s: &str, idx: i64) -> str {
+    byte := __load_byte(s as i64, idx)
+    I byte == 0 { R "" }
+    I byte == 32 { R " " }
+    I byte == 33 { R "!" }
+    I byte == 34 { R "\"" }
+    I byte == 35 { R "#" }
+    I byte == 36 { R "$" }
+    I byte == 37 { R "%" }
+    I byte == 38 { R "&" }
+    I byte == 39 { R "'" }
+    I byte == 40 { R "(" }
+    I byte == 41 { R ")" }
+    I byte == 42 { R "*" }
+    I byte == 43 { R "+" }
+    I byte == 44 { R "," }
+    I byte == 45 { R "-" }
+    I byte == 46 { R "." }
+    I byte == 47 { R "/" }
+    I byte == 48 { R "0" }
+    I byte == 49 { R "1" }
+    I byte == 50 { R "2" }
+    I byte == 51 { R "3" }
+    I byte == 52 { R "4" }
+    I byte == 53 { R "5" }
+    I byte == 54 { R "6" }
+    I byte == 55 { R "7" }
+    I byte == 56 { R "8" }
+    I byte == 57 { R "9" }
+    I byte == 58 { R ":" }
+    I byte == 59 { R ";" }
+    I byte == 60 { R "<" }
+    I byte == 61 { R "=" }
+    I byte == 62 { R ">" }
+    I byte == 63 { R "?" }
+    I byte == 64 { R "@" }
+    I byte == 65 { R "A" }
+    I byte == 66 { R "B" }
+    I byte == 67 { R "C" }
+    I byte == 68 { R "D" }
+    I byte == 69 { R "E" }
+    I byte == 70 { R "F" }
+    I byte == 71 { R "G" }
+    I byte == 72 { R "H" }
+    I byte == 73 { R "I" }
+    I byte == 74 { R "J" }
+    I byte == 75 { R "K" }
+    I byte == 76 { R "L" }
+    I byte == 77 { R "M" }
+    I byte == 78 { R "N" }
+    I byte == 79 { R "O" }
+    I byte == 80 { R "P" }
+    I byte == 81 { R "Q" }
+    I byte == 82 { R "R" }
+    I byte == 83 { R "S" }
+    I byte == 84 { R "T" }
+    I byte == 85 { R "U" }
+    I byte == 86 { R "V" }
+    I byte == 87 { R "W" }
+    I byte == 88 { R "X" }
+    I byte == 89 { R "Y" }
+    I byte == 90 { R "Z" }
+    I byte == 91 { R "[" }
+    I byte == 92 { R "\\" }
+    I byte == 93 { R "]" }
+    I byte == 94 { R "^" }
+    I byte == 95 { R "_" }
+    I byte == 96 { R "`" }
+    I byte == 97 { R "a" }
+    I byte == 98 { R "b" }
+    I byte == 99 { R "c" }
+    I byte == 100 { R "d" }
+    I byte == 101 { R "e" }
+    I byte == 102 { R "f" }
+    I byte == 103 { R "g" }
+    I byte == 104 { R "h" }
+    I byte == 105 { R "i" }
+    I byte == 106 { R "j" }
+    I byte == 107 { R "k" }
+    I byte == 108 { R "l" }
+    I byte == 109 { R "m" }
+    I byte == 110 { R "n" }
+    I byte == 111 { R "o" }
+    I byte == 112 { R "p" }
+    I byte == 113 { R "q" }
+    I byte == 114 { R "r" }
+    I byte == 115 { R "s" }
+    I byte == 116 { R "t" }
+    I byte == 117 { R "u" }
+    I byte == 118 { R "v" }
+    I byte == 119 { R "w" }
+    I byte == 120 { R "x" }
+    I byte == 121 { R "y" }
+    I byte == 122 { R "z" }
+    I byte == 123 { R "{" }
+    I byte == 124 { R "|" }
+    I byte == 125 { R "}" }
+    I byte == 126 { R "~" }
+    R "?"
+}
+# str_slice — pure vais: extracts substring [start, end)
+F str_slice(s: &str, start: i64, end: i64) -> str {
+    I start >= end {
+        R ""
+    }
+    result := ""
+    i := start
+    LW i < end {
+        result = result + str_char_at(s, i)
+        i = i + 1
+    }
+    R result
+}
+F str_contains(s: &str, substr: &str) -> bool {
+    slen := str_len(s)
+    sublen := str_len(substr)
+    I sublen == 0 {
+        R true
+    }
+    i := 0
+    LW i <= slen - sublen {
+        chunk := str_slice(s, i, i + sublen)
+        I chunk == substr {
+            R true
+        }
+        i = i + 1
+    }
+    R false
+}
 # str_split — pure vais implementation (returns JSON array string)
 # Usage: parts := str_split(s, delim)  → '["a","b","c"]'
 # Access: json_get(parts, "0"), json_get(parts, "1"), etc.
@@ -94,12 +226,151 @@ F count_json_array(arr: &str) -> i64 {
     R count
 }
 
-X F str_trim(s: &str) -> str
-X F str_to_lower(s: &str) -> str
-X F str_to_upper(s: &str) -> str
-X F str_replace(s: &str, old: &str, new_val: &str) -> str
-X F str_starts_with(s: &str, prefix: &str) -> bool
-X F str_ends_with(s: &str, suffix: &str) -> bool
+F str_starts_with(s: &str, prefix: &str) -> bool {
+    plen := str_len(prefix)
+    slen := str_len(s)
+    I plen > slen {
+        R false
+    }
+    chunk := str_slice(s, 0, plen)
+    R chunk == prefix
+}
+
+F str_ends_with(s: &str, suffix: &str) -> bool {
+    suflen := str_len(suffix)
+    slen := str_len(s)
+    I suflen > slen {
+        R false
+    }
+    chunk := str_slice(s, slen - suflen, slen)
+    R chunk == suffix
+}
+
+F str_trim(s: &str) -> str {
+    slen := str_len(s)
+    start := 0
+    searching_start := true
+    LW searching_start && start < slen {
+        ch := str_char_at(s, start)
+        I ch == " " || ch == "\t" || ch == "\n" || ch == "\r" {
+            start = start + 1
+        } EL {
+            searching_start = false
+        }
+    }
+    end := slen
+    searching_end := true
+    LW searching_end && end > start {
+        ch := str_char_at(s, end - 1)
+        I ch == " " || ch == "\t" || ch == "\n" || ch == "\r" {
+            end = end - 1
+        } EL {
+            searching_end = false
+        }
+    }
+    R str_slice(s, start, end)
+}
+
+F str_to_lower(s: &str) -> str {
+    slen := str_len(s)
+    result := ""
+    i := 0
+    LW i < slen {
+        ch := str_char_at(s, i)
+        I ch == "A" { result = result + "a" }
+        EL I ch == "B" { result = result + "b" }
+        EL I ch == "C" { result = result + "c" }
+        EL I ch == "D" { result = result + "d" }
+        EL I ch == "E" { result = result + "e" }
+        EL I ch == "F" { result = result + "f" }
+        EL I ch == "G" { result = result + "g" }
+        EL I ch == "H" { result = result + "h" }
+        EL I ch == "I" { result = result + "i" }
+        EL I ch == "J" { result = result + "j" }
+        EL I ch == "K" { result = result + "k" }
+        EL I ch == "L" { result = result + "l" }
+        EL I ch == "M" { result = result + "m" }
+        EL I ch == "N" { result = result + "n" }
+        EL I ch == "O" { result = result + "o" }
+        EL I ch == "P" { result = result + "p" }
+        EL I ch == "Q" { result = result + "q" }
+        EL I ch == "R" { result = result + "r" }
+        EL I ch == "S" { result = result + "s" }
+        EL I ch == "T" { result = result + "t" }
+        EL I ch == "U" { result = result + "u" }
+        EL I ch == "V" { result = result + "v" }
+        EL I ch == "W" { result = result + "w" }
+        EL I ch == "X" { result = result + "x" }
+        EL I ch == "Y" { result = result + "y" }
+        EL I ch == "Z" { result = result + "z" }
+        EL { result = result + ch }
+        i = i + 1
+    }
+    R result
+}
+
+F str_to_upper(s: &str) -> str {
+    slen := str_len(s)
+    result := ""
+    i := 0
+    LW i < slen {
+        ch := str_char_at(s, i)
+        I ch == "a" { result = result + "A" }
+        EL I ch == "b" { result = result + "B" }
+        EL I ch == "c" { result = result + "C" }
+        EL I ch == "d" { result = result + "D" }
+        EL I ch == "e" { result = result + "E" }
+        EL I ch == "f" { result = result + "F" }
+        EL I ch == "g" { result = result + "G" }
+        EL I ch == "h" { result = result + "H" }
+        EL I ch == "i" { result = result + "I" }
+        EL I ch == "j" { result = result + "J" }
+        EL I ch == "k" { result = result + "K" }
+        EL I ch == "l" { result = result + "L" }
+        EL I ch == "m" { result = result + "M" }
+        EL I ch == "n" { result = result + "N" }
+        EL I ch == "o" { result = result + "O" }
+        EL I ch == "p" { result = result + "P" }
+        EL I ch == "q" { result = result + "Q" }
+        EL I ch == "r" { result = result + "R" }
+        EL I ch == "s" { result = result + "S" }
+        EL I ch == "t" { result = result + "T" }
+        EL I ch == "u" { result = result + "U" }
+        EL I ch == "v" { result = result + "V" }
+        EL I ch == "w" { result = result + "W" }
+        EL I ch == "x" { result = result + "X" }
+        EL I ch == "y" { result = result + "Y" }
+        EL I ch == "z" { result = result + "Z" }
+        EL { result = result + ch }
+        i = i + 1
+    }
+    R result
+}
+
+F str_replace(s: &str, old: &str, new_val: &str) -> str {
+    slen := str_len(s)
+    oldlen := str_len(old)
+    I oldlen == 0 {
+        R s
+    }
+    result := ""
+    i := 0
+    LW i <= slen - oldlen {
+        chunk := str_slice(s, i, i + oldlen)
+        I chunk == old {
+            result = result + new_val
+            i = i + oldlen
+        } EL {
+            result = result + str_char_at(s, i)
+            i = i + 1
+        }
+    }
+    LW i < slen {
+        result = result + str_char_at(s, i)
+        i = i + 1
+    }
+    R result
+}
 
 # I/O
 X F println(s: &str)
@@ -107,21 +378,181 @@ X F read_file(path: &str) -> str
 X F write_file(path: &str, content: &str)
 
 # Time
-X F current_time_ms() -> i64
+X F __clock_gettime_ms() -> i64
+# current_time_ms — thin wrapper over platform clock extern
+F current_time_ms() -> i64 {
+    __clock_gettime_ms()
+}
 X F sleep_ms(ms: i64)
 
 # Number conversion
-X F i64_to_str(n: i64) -> str
-X F f64_to_str(n: f64) -> str
-X F str_to_i64(s: &str) -> i64
-X F str_to_f64(s: &str) -> f64
+F i64_to_str(n: i64) -> str {
+    I n == 0 {
+        R "0"
+    }
+    neg := false
+    val := n
+    I n < 0 {
+        neg = true
+        val = 0 - n
+    }
+    result := ""
+    LW val > 0 {
+        digit := val % 10
+        I digit == 0 { result = "0" + result }
+        EL I digit == 1 { result = "1" + result }
+        EL I digit == 2 { result = "2" + result }
+        EL I digit == 3 { result = "3" + result }
+        EL I digit == 4 { result = "4" + result }
+        EL I digit == 5 { result = "5" + result }
+        EL I digit == 6 { result = "6" + result }
+        EL I digit == 7 { result = "7" + result }
+        EL I digit == 8 { result = "8" + result }
+        EL { result = "9" + result }
+        val = val / 10
+    }
+    I neg {
+        result = "-" + result
+    }
+    R result
+}
+
+F f64_to_str(n: f64) -> str {
+    int_part := n as i64
+    int_str := i64_to_str(int_part)
+    frac := n - (int_part as f64)
+    I frac < 0.0 {
+        frac = 0.0 - frac
+    }
+    frac1000 := (frac * 1000.0) as i64
+    frac_str := i64_to_str(frac1000)
+    flen := str_len(frac_str)
+    LW flen < 3 {
+        frac_str = "0" + frac_str
+        flen = flen + 1
+    }
+    R int_str + "." + frac_str
+}
+
+# str_to_i64 — pure vais: parse decimal integer string
+F str_to_i64(s: &str) -> i64 {
+    slen := str_len(s)
+    I slen == 0 {
+        R 0
+    }
+    neg := false
+    start := 0
+    first := str_char_at(s, 0)
+    I first == "-" {
+        neg = true
+        start = 1
+    } EL I first == "+" {
+        start = 1
+    }
+    result := 0
+    i := start
+    LW i < slen {
+        ch := str_char_at(s, i)
+        I ch == "0" { result = result * 10 + 0 }
+        EL I ch == "1" { result = result * 10 + 1 }
+        EL I ch == "2" { result = result * 10 + 2 }
+        EL I ch == "3" { result = result * 10 + 3 }
+        EL I ch == "4" { result = result * 10 + 4 }
+        EL I ch == "5" { result = result * 10 + 5 }
+        EL I ch == "6" { result = result * 10 + 6 }
+        EL I ch == "7" { result = result * 10 + 7 }
+        EL I ch == "8" { result = result * 10 + 8 }
+        EL I ch == "9" { result = result * 10 + 9 }
+        i = i + 1
+    }
+    I neg {
+        R 0 - result
+    }
+    R result
+}
+
+# str_to_f64 — pure vais: parse decimal float string
+F str_to_f64(s: &str) -> f64 {
+    slen := str_len(s)
+    I slen == 0 {
+        R 0.0
+    }
+    neg := false
+    start := 0
+    first := str_char_at(s, 0)
+    I first == "-" {
+        neg = true
+        start = 1
+    } EL I first == "+" {
+        start = 1
+    }
+    int_part := 0
+    frac_part := 0
+    frac_div := 1
+    in_frac := false
+    i := start
+    LW i < slen {
+        ch := str_char_at(s, i)
+        I ch == "." {
+            in_frac = true
+        } EL I ch == "0" {
+            I in_frac { frac_part = frac_part * 10 + 0; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 0 }
+        } EL I ch == "1" {
+            I in_frac { frac_part = frac_part * 10 + 1; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 1 }
+        } EL I ch == "2" {
+            I in_frac { frac_part = frac_part * 10 + 2; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 2 }
+        } EL I ch == "3" {
+            I in_frac { frac_part = frac_part * 10 + 3; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 3 }
+        } EL I ch == "4" {
+            I in_frac { frac_part = frac_part * 10 + 4; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 4 }
+        } EL I ch == "5" {
+            I in_frac { frac_part = frac_part * 10 + 5; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 5 }
+        } EL I ch == "6" {
+            I in_frac { frac_part = frac_part * 10 + 6; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 6 }
+        } EL I ch == "7" {
+            I in_frac { frac_part = frac_part * 10 + 7; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 7 }
+        } EL I ch == "8" {
+            I in_frac { frac_part = frac_part * 10 + 8; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 8 }
+        } EL I ch == "9" {
+            I in_frac { frac_part = frac_part * 10 + 9; frac_div = frac_div * 10 }
+            EL { int_part = int_part * 10 + 9 }
+        }
+        i = i + 1
+    }
+    result := (int_part as f64) + ((frac_part as f64) / (frac_div as f64))
+    I neg {
+        R 0.0 - result
+    }
+    R result
+}
 
 # Math
+# floor/ceil/sqrt — extern C math functions; require libm (-lm) at link time
 X F floor(n: f64) -> f64
 X F ceil(n: f64) -> f64
 X F sqrt(n: f64) -> f64
-X F abs_f64(n: f64) -> f64
-X F abs_i64(n: i64) -> i64
+# abs_f64 — pure vais implementation (no libm dependency)
+F abs_f64(n: f64) -> f64 {
+    I n < 0.0 {
+        R 0.0 - n
+    }
+    R n
+}
+F abs_i64(n: i64) -> i64 {
+    I n < 0 {
+        R 0 - n
+    }
+    R n
+}
 
 # Random
 X F random_i64(min: i64, max: i64) -> i64

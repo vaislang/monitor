@@ -1,18 +1,28 @@
 #!/bin/bash
 # build.sh — monitor-server build harness
 #
-# Pipes vaisc → clang → link so that ROADMAP #9 (monitor re-verification)
-# can run end-to-end instead of stopping after TC. Runtime implementations
-# for monitor's 47 extern functions are NOT complete; the link step is
-# expected to report unresolved symbols, and that report IS the current
-# "runtime stub specification" for the monitor project. See the README
-# section added at the bottom of this file for the follow-up plan.
+# Full pipeline: vaisc → clang → link, producing `server/monitor-server`.
+#
+# History:
+#   - iter 13 (vais ROADMAP #6): initial scaffolding; link was expected to
+#     fail because monitor_runtime.c did not exist. Step 1.5 (python3) was
+#     deliberately omitted because vais ROADMAP #9 fix landed at the same
+#     time.
+#   - iter 15 (vais ROADMAP Phase 2): monitor_runtime.c (1586 LOC) now
+#     implements all 27 C-side symbols (io/socket, sqlite db, random/uuid,
+#     crypto+jwt, json). This script was updated to compile it and link
+#     with -lcrypto -lm -lsqlite3 so the full pipeline produces a working
+#     binary.
 #
 # Usage:
-#   ./build.sh                     # default: IR + object + link (may fail)
+#   ./build.sh                     # default: full pipeline → binary
 #   ./build.sh --ir-only           # stop after .ll emission
 #   ./build.sh --objects           # stop after clang -c
-#   ./build.sh --link-report       # run full pipeline and dump link errors
+#   ./build.sh --link-report       # run full pipeline; on link failure,
+#                                  # dump unresolved symbol list and exit 0
+#                                  # (kept for CI that wants to ingest the
+#                                  # unresolved-symbol report as a step
+#                                  # before flipping to strict mode).
 #
 # Exit codes:
 #   0  every step succeeded (binary produced)
@@ -24,16 +34,26 @@
 #   - vaisc built from /Users/sswoo/study/projects/vais/compiler
 #   - clang (Apple clang on macOS)
 #   - Vais std C runtimes under /opt/homebrew/opt/vais/share/vais/std
+#   - OpenSSL (libcrypto) for PBKDF2-HMAC-SHA256 and HMAC-SHA256 JWT
+#   - libsqlite3 for the db_* group
 
 set -euo pipefail
 
 REPO=/Users/sswoo/study/projects/vais
-VAISC="${VAISC:-$REPO/compiler/target/debug/vaisc}"
+VAISC="${VAISC:-$REPO/compiler/target/release/vaisc}"
+# Fall back to debug binary if release build is missing, matching what
+# iter 15 development used interactively.
+if [[ ! -x "$VAISC" ]]; then
+    VAISC="$REPO/compiler/target/debug/vaisc"
+fi
+
 STD="${STD:-/opt/homebrew/opt/vais/share/vais/std}"
 SRC=server/src
 OUT=server/monitor-server
 OBJ_DIR=/tmp/monitor_objs
 LINK_LOG=/tmp/monitor_link_errors.log
+MONITOR_RUNTIME_C="$SRC/monitor_runtime.c"
+MONITOR_RUNTIME_O=/tmp/monitor_runtime.o
 
 MODE="${1:-full}"
 
@@ -61,6 +81,7 @@ fi
 echo "=== Step 2: clang -c each .ll → .o ==="
 mkdir -p "$OBJ_DIR"
 rm -f "$OBJ_DIR"/*.o
+: > /tmp/monitor_clang.log
 FAILED_OBJS=0
 for ll in "$SRC"/main_*.ll; do
     base=$(basename "$ll" .ll)
@@ -79,25 +100,42 @@ if [[ "$MODE" == "--objects" ]]; then
     exit 0
 fi
 
-echo "=== Step 3: compile shared C runtimes ==="
+echo "=== Step 3: compile shared C runtimes + monitor_runtime.c ==="
 mkdir -p /tmp/monitor_runtime
+
+# Shared Vais std C runtimes (best effort — missing ones are warned but
+# don't stop the build; Step 4 will reveal any gaps).
 for rt in http_runtime sqlite_runtime http_server_runtime; do
     if [[ -f "$STD/$rt.c" ]]; then
-        clang -c "$STD/$rt.c" -o "/tmp/monitor_runtime/$rt.o" 2>&1 || {
+        clang -c "$STD/$rt.c" -o "/tmp/monitor_runtime/$rt.o" \
+            -I/opt/homebrew/include 2>&1 || {
             echo "  [warn] failed to compile $STD/$rt.c" >&2
         }
     fi
 done
 
-echo "=== Step 4: link (best effort) ==="
-# Monitor-specific runtime_glue.c is NOT yet written — this step is
-# expected to fail with unresolved externs. The failure log becomes the
-# input to the next iteration that writes runtime_glue.c / runtime.c.
+# Monitor-specific runtime implementations (iter 15 — vais ROADMAP Phase 2
+# #16~#20). This single file covers io/socket, sqlite db, random/uuid,
+# crypto+jwt, and json — ~1600 LOC.
+if [[ ! -f "$MONITOR_RUNTIME_C" ]]; then
+    echo "!! monitor_runtime.c not found at $MONITOR_RUNTIME_C" >&2
+    exit 3
+fi
+if ! clang -c "$MONITOR_RUNTIME_C" -o "$MONITOR_RUNTIME_O" \
+        -Wno-override-module -I/opt/homebrew/include \
+        2>>/tmp/monitor_clang.log; then
+    echo "!! failed to compile monitor_runtime.c — see /tmp/monitor_clang.log" >&2
+    exit 3
+fi
+
+echo "=== Step 4: link ==="
 mkdir -p "$(dirname "$OUT")"
 if clang "$OBJ_DIR"/*.o \
         /tmp/monitor_runtime/*.o \
+        "$MONITOR_RUNTIME_O" \
         -o "$OUT" \
-        -lsqlite3 -lc \
+        -L/opt/homebrew/lib \
+        -lsqlite3 -lcrypto -lm -lc \
         2>"$LINK_LOG"; then
     echo "=== Build complete ==="
     ls -la "$OUT"
@@ -122,29 +160,3 @@ if [[ "$MODE" == "--link-report" ]]; then
     exit 0
 fi
 exit 4
-
-# ============================================================================
-# README (for whoever picks up the runtime stub work)
-# ============================================================================
-# monitor/server declares ~47 extern functions in runtime.vais (see
-# `grep '^X F ' server/src/runtime.vais`). signature/server has a
-# hand-written `src/runtime.c` that implements all of its 9 externs. To
-# produce a working monitor binary, someone needs to write the monitor
-# equivalent — roughly grouped as:
-#
-#   1. string helpers: str_len, str_char_at, str_slice, str_contains,
-#      str_starts_with, str_ends_with, str_replace, str_trim, str_to_lower,
-#      str_to_upper, str_to_f64, str_to_i64, i64_to_str, f64_to_str
-#   2. math: abs_f64, abs_i64, ceil, floor, sqrt, random_f64, random_i64
-#   3. time: current_time_ms, sleep_ms
-#   4. io: println, read_file, write_file, env_get
-#   5. json: json_parse, json_stringify, json_get, json_set
-#   6. crypto / auth: hash_password, verify_password, jwt_encode, jwt_decode,
-#      generate_uuid
-#   7. http server: server_listen, server_stop
-#   8. sqlite: db_connect, db_close, db_execute, db_query, db_prepare,
-#      db_execute_prepared, db_begin_transaction, db_commit, db_rollback
-#
-# The fastest path is to port signature/server/src/runtime.c and add the
-# missing groups, reusing /opt/homebrew/opt/vais/share/vais/std/*.c
-# helpers where possible. Track that work as a separate ROADMAP item.

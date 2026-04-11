@@ -36,3 +36,13 @@ Thumbs.db
 data/*.db
 data/*.db-journal
 data/*.log
+
+# Compiled server binary
+server/monitor-server
+server/signature-server
+
+# sqlite runtime databases created by monitor-server at startup
+vais-monitor.db
+vais-monitor.db-*
+*.sqlite
+*.sqlite-*
