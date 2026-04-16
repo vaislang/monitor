@@ -44,4 +44,11 @@ export default defineConfig({
 
   // Allow importing locales JSON files
   assetsInclude: ["**/*.json"],
+
+  // Vitest configuration
+  test: {
+    environment: "jsdom",
+    globals: true,
+    exclude: ["e2e/**", "node_modules/**"],
+  },
 });
