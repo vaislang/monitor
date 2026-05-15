@@ -1,8 +1,0 @@
-
-F handle_graph(method: str, path: str, headers: str, body: str) -> str {
-    claims := require_auth(headers)
-    I str_len(claims) == 0 {
-        R error_response(401, "Unauthorized")
-    }
-    json_response(200, "{\"message\":\"Graph API not yet available\"}")
-}

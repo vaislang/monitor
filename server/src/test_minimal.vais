@@ -1,4 +1,0 @@
-
-F main() {
-    init_db()
-}
