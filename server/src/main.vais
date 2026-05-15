@@ -119,17 +119,20 @@ fn find_summary_score(id: i64) -> Result<i64, str> {
     }
 }
 
+fn has_summary(id: i64) -> bool {
+    result := find_summary_score(id)
+    match result {
+        Ok(_score) => true,
+        Err(_message) => false,
+    }
+}
+
 fn main() -> i64 {
-    first := find_summary_score(1)
-    match first {
-        Ok(_score) => {
-            missing := find_summary_score(404)
-            match missing {
-                Ok(_unexpected) => { return 1 },
-                Err(_message) => { return 0 },
-            }
-        },
-        Err(_message) => { return 1 },
+    I has_summary(1) {
+        I has_summary(404) {
+            return 1
+        }
+        return 0
     }
     1
 }
