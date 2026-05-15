@@ -1,0 +1,129 @@
+# Monitor reference slice: pure domain core only.
+# Do not link unfinished db/server/ws runtime symbols from this file.
+
+enum Option<T> {
+    None,
+    Some(T),
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+enum TaskState {
+    Todo,
+    Doing,
+    Done,
+}
+
+struct Task {
+    id: i64,
+    title_len: i64,
+    priority: i64,
+    completed: bool,
+}
+
+struct TaskSummary {
+    id: i64,
+    score: i64,
+    state_code: i64,
+}
+
+fn state_code(state: TaskState) -> i64 {
+    match state {
+        Todo => 0,
+        Doing => 1,
+        Done => 2,
+    }
+}
+
+fn validate_title_len(title_len: i64) -> Result<i64, str> {
+    I title_len <= 0 {
+        return Err("title_len must be positive")
+    }
+    Ok(title_len)
+}
+
+fn task_state(priority: i64, completed: bool) -> TaskState {
+    I completed {
+        Done
+    } else I priority > 7 {
+        Doing
+    } else {
+        Todo
+    }
+}
+
+fn seed_title_len(id: i64) -> Option<i64> {
+    I id == 1 {
+        Some(12)
+    } else I id == 2 {
+        Some(9)
+    } else {
+        None
+    }
+}
+
+fn seed_priority(id: i64) -> i64 {
+    I id == 1 {
+        8
+    } else I id == 2 {
+        5
+    } else {
+        0
+    }
+}
+
+fn seed_completed(id: i64) -> bool {
+    I id == 2 {
+        true
+    } else {
+        false
+    }
+}
+
+fn make_task(id: i64, title_len: i64) -> Task {
+    Task {
+        id: id,
+        title_len: title_len,
+        priority: seed_priority(id),
+        completed: seed_completed(id),
+    }
+}
+
+fn make_summary(task: Task) -> TaskSummary {
+    TaskSummary {
+        id: task.id,
+        score: task.priority + task.title_len,
+        state_code: state_code(task_state(task.priority, task.completed)),
+    }
+}
+
+fn summary_score(summary: TaskSummary) -> i64 {
+    summary.score + summary.state_code
+}
+
+fn summarize(task: Task) -> Result<i64, str> {
+    valid_len := validate_title_len(task.title_len)
+    match valid_len {
+        Ok(_len) => Ok(summary_score(make_summary(task))),
+        Err(message) => Err(message),
+    }
+}
+
+fn find_summary_score(id: i64) -> Result<i64, str> {
+    match seed_title_len(id) {
+        Some(title_len) => summarize(make_task(id, title_len)),
+        None => Err("task not found"),
+    }
+}
+
+fn summary_score_or_zero(id: i64) -> i64 {
+    match find_summary_score(id) {
+        Ok(score) => score,
+        Err(_message) => 0,
+    }
+}
+
+fn main() -> i64 = summary_score_or_zero(1) + summary_score_or_zero(404)

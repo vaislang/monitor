@@ -5,13 +5,16 @@ Start here:
 ```bash
 cd /Users/sswoo/study/projects/vais-apps/monitor
 git status --short --branch
-cd server && ./build.sh --ir-only
-cd ../web && npm install && npm run build
+scripts/check-reference-gates.sh
 ```
 
 The server slice is intentionally IR-only. It validates current Vais language
 surface without pretending that DB/server/ws runtime symbols are ready for this
 reference app.
+
+`playground/monitor.vais` is a synchronized copy of `server/src/main.vais`. If
+the server source changes, run `scripts/sync-playground-example.sh` before the
+reference gates.
 
 The current source of truth for language and public claims is the sibling
 compiler repository:

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$ROOT_DIR/server/src/main.vais"
-OUT_DIR="${TMPDIR:-/tmp}/vais-monitor"
+OUT_DIR="${MONITOR_OUT_DIR:-${TMPDIR:-/tmp}/vais-monitor}"
 OUT_FILE="$OUT_DIR/monitor.ll"
 LOG_FILE="$OUT_DIR/monitor.vaisc.log"
 OBJ_FILE="$OUT_DIR/monitor.o"

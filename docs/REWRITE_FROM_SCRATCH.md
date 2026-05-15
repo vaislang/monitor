@@ -8,6 +8,8 @@ The rewrite starts with the smallest evidence-backed slice:
 
 - Vais domain logic compiles to LLVM IR only.
 - Generic enums use the public `Option<T>` and `Result<T, E>` surface.
+- The IR layout fixture rejects anonymous `{ i8, i64 }` enum layout regressions.
+- The playground sample is synchronized from the same domain source.
 - The web shell builds separately and does not claim server integration.
 - Docs name evidence boundaries instead of product-complete status.
 

@@ -17,7 +17,11 @@ unless explicitly asked. The old tree is preserved at
 - `server/src/main.vais` is a pure domain core using canonical `fn`, `struct`,
   `enum`, `Option<T>`, `Result<T, E>`, and `match`.
 - `server/build.sh --ir-only` is the certified server gate for this repo.
+- `playground/monitor.vais` must stay byte-for-byte synchronized with
+  `server/src/main.vais`; run `scripts/sync-playground-example.sh` after source
+  changes.
 - `web/` is a static Vite shell for the same seed state.
+- `scripts/check-reference-gates.sh` is the root verification command.
 
 Do not call unfinished `server_listen*`, `db_*`, or `ws_*` runtime symbols. Do
 not commit `.ll`, `.db`, `node_modules`, or `dist` artifacts.

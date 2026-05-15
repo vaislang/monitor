@@ -22,17 +22,14 @@ from a clean vertical slice using the current official Vais docs.
   `Option<T>`, `Result<T, E>`, and `match`.
 - `server/build.sh --ir-only`: emits LLVM IR to a temporary directory without
   linking unfinished server/db/ws runtime symbols.
+- `playground/monitor.vais`: playground copy of the same domain source. Keep it
+  synchronized with `scripts/sync-playground-example.sh`.
 - `web/`: static Vite shell that displays the same seed monitor task state.
 
 ## Verify
 
 ```bash
-cd server
-./build.sh --ir-only
-
-cd ../web
-npm install
-npm run build
+scripts/check-reference-gates.sh
 ```
 
 ## Recover the previous tree
@@ -57,10 +54,10 @@ Read in this order before writing any Vais:
 
 ## Next
 
-Per `REFERENCE_APP_CONTRACT.md`, the suggested shape is a small task/notes
-service exercising list / detail / create / update / delete with Result-typed
-validation and Option-typed lookups. Build the smallest vertical slice first
-and verify against the named compiler gates before broadening scope.
+Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
+The next practical step is a clean-checkout CI or automation wrapper for
+`scripts/check-reference-gates.sh`. HTTP and DB adapters stay blocked until
+their runtime symbols have named reproducible gates for this app shape.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond
