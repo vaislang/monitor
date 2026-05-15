@@ -39,8 +39,11 @@ system `grep` so hosted runners do not need an extra package for source scans.
 Hosted CI has been verified:
 
 - Workflow: `Monitor Reference Gates`
-- Run: `https://github.com/vaislang/monitor/actions/runs/25896575318`
+- Run: `https://github.com/vaislang/monitor/actions/runs/25896971067`
+- Commit: `fc5a8ef` (`test: add monitor adapter readiness gate`)
 - Result: passed
+- Included checks: adapter readiness status, IR layout, runtime boundary,
+  playground sync, and web build
 
 Treat hosted CI as required evidence for future broadening when a change touches
 the compiler gate, runtime-boundary gate, playground source, or web shell.
