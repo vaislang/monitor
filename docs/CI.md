@@ -39,15 +39,11 @@ system `grep` so hosted runners do not need an extra package for source scans.
 Hosted CI has been verified:
 
 - Workflow: `Monitor Reference Gates`
-- Run: `https://github.com/vaislang/monitor/actions/runs/25896971067`
-- Commit: `fc5a8ef` (`test: add monitor adapter readiness gate`)
+- Run: `https://github.com/vaislang/monitor/actions/runs/25943111672`
+- Commit: `f589091` (`fix: avoid empty match phi in monitor smoke`)
 - Result: passed
-- Included checks: adapter readiness status, IR layout, runtime boundary,
-  playground sync, and web build
-
-Current local reference gates also include `scripts/check-http-adapter.sh`, which
-links the HTTP runtime fixture with `std/http_runtime.c` before running it.
-Re-run hosted CI after pushing this broadened gate.
+- Included checks: adapter readiness status, IR layout, native domain smoke,
+  runtime boundary, HTTP adapter fixture, playground sync, and web build
 
 Treat hosted CI as required evidence for future broadening when a change touches
 the compiler gate, runtime-boundary gate, playground source, or web shell.
