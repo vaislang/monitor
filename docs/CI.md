@@ -39,11 +39,12 @@ system `grep` so hosted runners do not need an extra package for source scans.
 Hosted CI has been verified:
 
 - Workflow: `Monitor Reference Gates`
-- Run: `https://github.com/vaislang/monitor/actions/runs/25943111672`
-- Commit: `f589091` (`fix: avoid empty match phi in monitor smoke`)
+- Run: `https://github.com/vaislang/monitor/actions/runs/25944026968`
+- Commit: `fd49418` (`test: add monitor HTTP request fixture`)
 - Result: passed
 - Included checks: adapter readiness status, IR layout, native domain smoke,
-  runtime boundary, HTTP adapter fixture, playground sync, and web build
+  runtime boundary, HTTP adapter fixture, HTTP request fixture, playground sync,
+  and web build
 
 Treat hosted CI as required evidence for future broadening when a change touches
 the compiler gate, runtime-boundary gate, playground source, or web shell.
