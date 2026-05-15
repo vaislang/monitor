@@ -1,0 +1,17 @@
+.ai/
+
+# Vais build outputs
+*.ll
+*.o
+*.out
+*.db
+.vais-cache/
+
+# Web build outputs
+web/node_modules/
+web/dist/
+
+# Local environment noise
+.DS_Store
+.env
+.env.*

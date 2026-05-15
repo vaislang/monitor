@@ -1,6 +1,8 @@
-# monitor (reset)
+# monitor
 
-Working tree intentionally cleared on 2026-05-15.
+Current clean rewrite for a Vais reference app. The repository was intentionally
+reset on 2026-05-15 so new code starts from the current public language and
+compiler baseline.
 
 ## Why
 
@@ -14,6 +16,25 @@ boundaries).
 Rather than patch around missing runtime symbols, the project is being rebuilt
 from a clean vertical slice using the current official Vais docs.
 
+## Current slice
+
+- `server/src/main.vais`: pure Vais domain core using `fn`, `struct`, `enum`,
+  `Option<T>`, `Result<T, E>`, and `match`.
+- `server/build.sh --ir-only`: emits LLVM IR to a temporary directory without
+  linking unfinished server/db/ws runtime symbols.
+- `web/`: static Vite shell that displays the same seed monitor task state.
+
+## Verify
+
+```bash
+cd server
+./build.sh --ir-only
+
+cd ../web
+npm install
+npm run build
+```
+
 ## Recover the previous tree
 
 ```bash
@@ -22,7 +43,7 @@ git checkout legacy-before-rewrite-2026-05-15
 
 The tag points at commit `d78e67f` ("docs: prepare monitor reference rewrite
 handoff"). Full history including PRD.md, ROADMAP.md, and the legacy
-server/web sources is preserved on `master`.
+server/web sources is preserved in git history.
 
 ## Required reading before new code
 

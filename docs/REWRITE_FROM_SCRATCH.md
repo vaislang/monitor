@@ -1,0 +1,21 @@
+# Rewrite From Scratch
+
+The previous monitor implementation was removed from the working tree because it
+depended on runtime symbols that are not yet certified for this reference app:
+`server_listen*`, `db_*`, and `ws_*`.
+
+The rewrite starts with the smallest evidence-backed slice:
+
+- Vais domain logic compiles to LLVM IR only.
+- Generic enums use the public `Option<T>` and `Result<T, E>` surface.
+- The web shell builds separately and does not claim server integration.
+- Docs name evidence boundaries instead of product-complete status.
+
+Recover the old tree only for comparison:
+
+```bash
+git checkout legacy-before-rewrite-2026-05-15
+```
+
+Do not copy old source back into `master` without revalidating it against the
+current language card and public status document.

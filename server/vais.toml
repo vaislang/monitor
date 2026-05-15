@@ -1,0 +1,8 @@
+[package]
+name = "monitor-server"
+version = "0.1.0"
+description = "IR-only Vais monitor reference app domain slice"
+
+[build]
+entry = "src/main.vais"
+gate = "ir-only"
