@@ -14,6 +14,12 @@ After committing changes, run:
 scripts/check-clean-checkout.sh
 ```
 
+After pushing changes, verify the hosted workflow:
+
+```bash
+gh run list --repo vaislang/monitor --limit 5
+```
+
 The server slice is intentionally IR-only. It validates current Vais language
 surface without pretending that DB/server/ws runtime symbols are ready for this
 reference app.

@@ -1,5 +1,7 @@
 # monitor
 
+[![Monitor Reference Gates](https://github.com/vaislang/monitor/actions/workflows/reference-gates.yml/badge.svg)](https://github.com/vaislang/monitor/actions/workflows/reference-gates.yml)
+
 Current clean rewrite for a Vais reference app. The repository was intentionally
 reset on 2026-05-15 so new code starts from the current public language and
 compiler baseline.
@@ -28,7 +30,7 @@ from a clean vertical slice using the current official Vais docs.
 - `scripts/check-runtime-boundary.sh`: rejects uncertified HTTP/DB/WS runtime
   calls until named gates exist for this app shape.
 - `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
-  hosted gate execution once this repo has a remote.
+  hosted gate execution.
 
 ## Verify
 
@@ -68,9 +70,8 @@ Read in this order before writing any Vais:
 ## Next
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
-The next practical step is a hosted CI run after a remote is configured. HTTP and
-DB adapters stay blocked until their runtime symbols have named reproducible
-gates for this app shape.
+HTTP and DB adapters stay blocked until their runtime symbols have named
+reproducible gates for this app shape.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

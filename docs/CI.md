@@ -1,8 +1,7 @@
 # CI And Automation
 
-`monitor` has no git remote configured in this local checkout, but the repository
-now includes a GitHub Actions workflow template at
-`.github/workflows/reference-gates.yml`.
+`monitor` is connected to `https://github.com/vaislang/monitor` and includes a
+GitHub Actions workflow at `.github/workflows/reference-gates.yml`.
 
 ## Local Automation
 
@@ -37,6 +36,11 @@ system `grep` so hosted runners do not need an extra package for source scans.
 
 ## Remote Boundary
 
-Because this local repo currently has no remote, this workflow has not been
-verified by a hosted CI run. Treat hosted CI as pending until a remote exists and
-the workflow passes there.
+Hosted CI has been verified:
+
+- Workflow: `Monitor Reference Gates`
+- Run: `https://github.com/vaislang/monitor/actions/runs/25896575318`
+- Result: passed
+
+Treat hosted CI as required evidence for future broadening when a change touches
+the compiler gate, runtime-boundary gate, playground source, or web shell.

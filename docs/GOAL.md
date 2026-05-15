@@ -14,6 +14,7 @@ from the official Vais docs without relying on hidden project memory.
   committed
 - Runtime boundary gate: `scripts/check-runtime-boundary.sh`
 - CI template: `.github/workflows/reference-gates.yml`
+- Remote: `https://github.com/vaislang/monitor`
 
 ## Acceptance Rule
 
