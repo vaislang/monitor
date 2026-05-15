@@ -5,6 +5,9 @@ on:
   push:
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   reference-gates:
     runs-on: macos-latest
@@ -29,11 +32,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build vaisc
-        working-directory: vais/compiler
+        working-directory: vais
         run: cargo build --release -p vaisc
 
       - name: Run monitor reference gates
         working-directory: monitor
         env:
-          VAIS_COMPILER_DIR: ${{ github.workspace }}/vais/compiler
+          VAIS_COMPILER_DIR: ${{ github.workspace }}/vais
         run: scripts/check-reference-gates.sh
