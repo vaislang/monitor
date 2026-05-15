@@ -36,7 +36,18 @@ compiler repository:
 - `/Users/sswoo/study/projects/vais/compiler/PUBLIC_STATUS.md`
 - `docs/GOAL.md`
 - `docs/RUNTIME_BOUNDARY.md`
+- `docs/ADAPTER_READINESS.md`
 - `docs/CI.md`
 
 If compiler behavior and docs disagree, stop and fix the compiler or docs before
 adding fallback syntax here.
+
+Before adding HTTP or DB runtime code, run:
+
+```bash
+scripts/check-adapter-readiness.sh --require-promoted
+```
+
+At the current baseline this is expected to fail, because the public status has
+individual DB/server runtime smokes but not a promoted single DB/server/web
+runtime main gate.

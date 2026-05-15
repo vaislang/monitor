@@ -19,12 +19,18 @@
   `docs/CI.md` to make hosted CI setup explicit.
 - Connected `origin` to `https://github.com/vaislang/monitor` and verified the
   hosted `Monitor Reference Gates` workflow passes.
+- Added `scripts/check-adapter-readiness.sh` and
+  `docs/ADAPTER_READINESS.md` so HTTP/DB adapter promotion has an explicit
+  upstream evidence gate instead of relying on inference from individual package
+  smokes.
 
 ## Next
 
-1. Add an HTTP adapter only after the server runtime symbols are promoted into a
-   reproducible main-branch gate.
-2. Add DB persistence only after the DB runtime path has a named gate for this
+1. Run `scripts/check-adapter-readiness.sh --require-promoted` before starting
+   any HTTP or DB adapter implementation.
+2. Add an HTTP adapter only after the server runtime symbols are promoted into a
+   reproducible main-branch gate for this app shape.
+3. Add DB persistence only after the DB runtime path has a named gate for this
    app shape.
 
 ## Completion Rule

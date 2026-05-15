@@ -13,6 +13,7 @@ from the official Vais docs without relying on hidden project memory.
 - Clean-checkout gate: `scripts/check-clean-checkout.sh` after changes are
   committed
 - Runtime boundary gate: `scripts/check-runtime-boundary.sh`
+- Adapter readiness gate: `scripts/check-adapter-readiness.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
 
@@ -29,5 +30,10 @@ No new surface is considered done until it has:
 ## Blocked Surfaces
 
 HTTP and DB adapters stay blocked until the corresponding server/db runtime
-symbols have reproducible named gates for this app shape. Do not add placeholder
-runtime calls that only fail at link time.
+symbols have reproducible named gates for this app shape. The precondition is:
+
+```bash
+scripts/check-adapter-readiness.sh --require-promoted
+```
+
+Do not add placeholder runtime calls that only fail at link time.

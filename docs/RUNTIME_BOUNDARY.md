@@ -22,9 +22,18 @@ compiler/public status names reproducible gates for this app shape:
 `scripts/check-runtime-boundary.sh` enforces this over `server/src` and
 `playground`.
 
+Before changing this boundary, run:
+
+```bash
+scripts/check-adapter-readiness.sh --require-promoted
+```
+
+If it fails, the boundary remains closed.
+
 ## Evidence Boundary
 
 `/Users/sswoo/study/projects/vais/compiler/PUBLIC_STATUS.md` currently lists
 VaisDB and Vais Server runtime smoke evidence, but also states that the single
 full ecosystem runtime aggregate runner is still pending. This app therefore
-must not claim HTTP or DB integration completeness yet.
+must not claim HTTP or DB integration completeness yet. See
+`docs/ADAPTER_READINESS.md` for the promotion rule.
