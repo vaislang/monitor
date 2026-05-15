@@ -14,6 +14,8 @@ The rewrite starts with the smallest evidence-backed slice:
 - Docs name evidence boundaries instead of product-complete status.
 - `scripts/check-clean-checkout.sh` verifies committed changes from a temporary
   git worktree.
+- `scripts/check-runtime-boundary.sh` prevents uncertified HTTP/DB/WS runtime
+  calls from returning unnoticed.
 
 Recover the old tree only for comparison:
 

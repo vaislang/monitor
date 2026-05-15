@@ -25,6 +25,8 @@ unless explicitly asked. The old tree is preserved at
 - `scripts/check-clean-checkout.sh` verifies the committed tree from a temporary
   git worktree.
 - `docs/GOAL.md` defines the acceptance rule for broadening the reference app.
+- `docs/RUNTIME_BOUNDARY.md` and `scripts/check-runtime-boundary.sh` define the
+  blocked HTTP/DB/WS runtime surface.
 
 Do not call unfinished `server_listen*`, `db_*`, or `ws_*` runtime symbols. Do
 not commit `.ll`, `.db`, `node_modules`, or `dist` artifacts.

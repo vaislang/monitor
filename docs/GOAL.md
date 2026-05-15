@@ -12,6 +12,7 @@ from the official Vais docs without relying on hidden project memory.
 - Root gate: `scripts/check-reference-gates.sh`
 - Clean-checkout gate: `scripts/check-clean-checkout.sh` after changes are
   committed
+- Runtime boundary gate: `scripts/check-runtime-boundary.sh`
 
 ## Acceptance Rule
 

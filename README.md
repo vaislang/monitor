@@ -25,6 +25,8 @@ from a clean vertical slice using the current official Vais docs.
 - `playground/monitor.vais`: playground copy of the same domain source. Keep it
   synchronized with `scripts/sync-playground-example.sh`.
 - `web/`: static Vite shell that displays the same seed monitor task state.
+- `scripts/check-runtime-boundary.sh`: rejects uncertified HTTP/DB/WS runtime
+  calls until named gates exist for this app shape.
 
 ## Verify
 
@@ -58,6 +60,7 @@ Read in this order before writing any Vais:
 4. `/Users/sswoo/study/projects/vais/compiler/docs/ai/AI_DEVELOPER_GUIDE.md`
 5. `/Users/sswoo/study/projects/vais/compiler/docs/ai/REFERENCE_APP_CONTRACT.md`
 6. `docs/GOAL.md`
+7. `docs/RUNTIME_BOUNDARY.md`
 
 ## Next
 

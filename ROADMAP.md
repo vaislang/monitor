@@ -13,6 +13,8 @@
   cannot silently drift from the server domain source.
 - Added `scripts/check-clean-checkout.sh` and `docs/GOAL.md` so committed work
   has a clean-checkout acceptance path.
+- Added `scripts/check-runtime-boundary.sh` and `docs/RUNTIME_BOUNDARY.md` so
+  uncertified HTTP/DB/WS calls cannot silently re-enter the app source.
 
 ## Next
 
