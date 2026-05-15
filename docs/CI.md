@@ -32,6 +32,9 @@ The GitHub Actions workflow checks out `vaislang/vais`, builds
 reference gates. Hosted macOS runners also install `llvm@17` and set
 `LLVM_SYS_170_PREFIX` before building `vaisc`.
 
+`ripgrep` is used when available, but the runtime-boundary gate falls back to
+system `grep` so hosted runners do not need an extra package for source scans.
+
 ## Remote Boundary
 
 Because this local repo currently has no remote, this workflow has not been

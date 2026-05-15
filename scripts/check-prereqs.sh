@@ -12,7 +12,6 @@ require_cmd() {
 
 require_cmd git
 require_cmd npm
-require_cmd rg
 
 if [[ -n "${VAISC:-}" ]]; then
   if [[ ! -x "$VAISC" ]]; then
