@@ -29,7 +29,8 @@ The gate needs a built `vaisc` binary. It resolves the compiler in this order:
 
 The GitHub Actions workflow checks out `vaislang/vais`, builds
 `cargo build --release -p vaisc`, sets `VAIS_COMPILER_DIR`, then runs the
-reference gates.
+reference gates. Hosted macOS runners also install `llvm@17` and set
+`LLVM_SYS_170_PREFIX` before building `vaisc`.
 
 ## Remote Boundary
 

@@ -31,6 +31,12 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install LLVM 17
+        run: |
+          brew install llvm@17
+          echo "LLVM_SYS_170_PREFIX=$(brew --prefix llvm@17)" >> "$GITHUB_ENV"
+          echo "$(brew --prefix llvm@17)/bin" >> "$GITHUB_PATH"
+
       - name: Build vaisc
         working-directory: vais
         run: cargo build --release -p vaisc
