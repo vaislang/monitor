@@ -1,0 +1,174 @@
+# Monitor DB persistence fixture.
+# This file certifies that the monitor app can persist a single monitor task
+# row through the public SQLite runtime and observe that row after closing and
+# reopening the database file.
+#
+# The runtime expects C strings (char*) for path/sql/text arguments, so every
+# runtime symbol is declared with raw i64 pointer arguments and Vais string
+# literals cross the C boundary through explicit `as i64` casts. This avoids
+# passing Vais fat strings into C slots that expect a single pointer.
+
+impl fn __sqlite_open(path: i64) -> i64
+impl fn __sqlite_close(handle: i64) -> i64
+impl fn __sqlite_exec(handle: i64, sql: i64, callback: i64) -> i64
+impl fn __sqlite_prepare(handle: i64, sql: i64) -> i64
+impl fn __sqlite_bind_int(stmt: i64, index: i64, value: i64) -> i64
+impl fn __sqlite_bind_text(stmt: i64, index: i64, text: i64) -> i64
+impl fn __sqlite_step(stmt: i64) -> i64
+impl fn __sqlite_column_int(stmt: i64, index: i64) -> i64
+impl fn __sqlite_finalize(stmt: i64) -> i64
+impl fn __sqlite_last_insert_rowid(handle: i64) -> i64
+impl fn __sqlite_changes(handle: i64) -> i64
+
+fn sqlite_ok() -> i64 { 0 }
+fn sqlite_row() -> i64 { 100 }
+fn sqlite_done() -> i64 { 101 }
+
+fn persistence_path() -> i64 { "/tmp/vais-monitor-db-persistence.sqlite" as i64 }
+
+fn drop_sql() -> i64 { "DROP TABLE IF EXISTS monitor_tasks" as i64 }
+
+fn create_sql() -> i64 {
+    "CREATE TABLE monitor_tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, priority INTEGER NOT NULL, title_len INTEGER NOT NULL)" as i64
+}
+
+fn insert_sql() -> i64 {
+    "INSERT INTO monitor_tasks (title, priority, title_len) VALUES (?, ?, ?)" as i64
+}
+
+fn select_sql() -> i64 {
+    "SELECT COUNT(*), COALESCE(SUM(priority), 0), COALESCE(SUM(title_len), 0) FROM monitor_tasks" as i64
+}
+
+fn task_title() -> i64 { "ship monitor" as i64 }
+fn task_priority() -> i64 { 8 }
+fn task_title_len() -> i64 { 12 }
+
+fn finalize_and(stmt: i64, code: i64) -> i64 {
+    __sqlite_finalize(stmt)
+    code
+}
+
+fn close_and(handle: i64, code: i64) -> i64 {
+    __sqlite_close(handle)
+    code
+}
+
+# Drop/create the table, insert one row, and verify rowid + changes counters.
+# Returns 0 on success or a non-zero error code.
+fn seed_database(handle: i64) -> i64 {
+    drop_rc := __sqlite_exec(handle, drop_sql(), 0)
+    I drop_rc != sqlite_ok() {
+        return 11
+    }
+
+    create_rc := __sqlite_exec(handle, create_sql(), 0)
+    I create_rc != sqlite_ok() {
+        return 12
+    }
+
+    stmt := __sqlite_prepare(handle, insert_sql())
+    I stmt == 0 {
+        return 13
+    }
+
+    bind_title := __sqlite_bind_text(stmt, 1, task_title())
+    I bind_title != sqlite_ok() {
+        return finalize_and(stmt, 14)
+    }
+
+    bind_priority := __sqlite_bind_int(stmt, 2, task_priority())
+    I bind_priority != sqlite_ok() {
+        return finalize_and(stmt, 15)
+    }
+
+    bind_len := __sqlite_bind_int(stmt, 3, task_title_len())
+    I bind_len != sqlite_ok() {
+        return finalize_and(stmt, 16)
+    }
+
+    step_rc := __sqlite_step(stmt)
+    I step_rc != sqlite_done() {
+        return finalize_and(stmt, 17)
+    }
+
+    __sqlite_finalize(stmt)
+
+    rowid := __sqlite_last_insert_rowid(handle)
+    I rowid != 1 {
+        return 18
+    }
+
+    changes := __sqlite_changes(handle)
+    I changes != 1 {
+        return 19
+    }
+
+    0
+}
+
+# After reopen: verify exactly one row with expected priority and title_len
+# sums. Returns 0 on success.
+fn verify_database(handle: i64) -> i64 {
+    stmt := __sqlite_prepare(handle, select_sql())
+    I stmt == 0 {
+        return 21
+    }
+
+    step_rc := __sqlite_step(stmt)
+    I step_rc != sqlite_row() {
+        return finalize_and(stmt, 22)
+    }
+
+    count := __sqlite_column_int(stmt, 0)
+    I count != 1 {
+        return finalize_and(stmt, 23)
+    }
+
+    sum_priority := __sqlite_column_int(stmt, 1)
+    I sum_priority != task_priority() {
+        return finalize_and(stmt, 24)
+    }
+
+    sum_title_len := __sqlite_column_int(stmt, 2)
+    I sum_title_len != task_title_len() {
+        return finalize_and(stmt, 25)
+    }
+
+    __sqlite_finalize(stmt)
+    0
+}
+
+fn main() -> i64 {
+    handle := __sqlite_open(persistence_path())
+    I handle == 0 {
+        return 1
+    }
+
+    seed_rc := seed_database(handle)
+    I seed_rc != 0 {
+        return close_and(handle, seed_rc)
+    }
+
+    close_rc := __sqlite_close(handle)
+    I close_rc != sqlite_ok() {
+        return 2
+    }
+
+    reopened := __sqlite_open(persistence_path())
+    I reopened == 0 {
+        return 3
+    }
+
+    verify_rc := verify_database(reopened)
+    I verify_rc != 0 {
+        return close_and(reopened, verify_rc)
+    }
+
+    close2_rc := __sqlite_close(reopened)
+    I close2_rc != sqlite_ok() {
+        return 4
+    }
+
+    0
+}

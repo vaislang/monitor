@@ -23,6 +23,14 @@ The rewrite starts with the smallest evidence-backed slice:
   runtime parser's explicit C ABI: a 64-byte `VaisRequest` output buffer is
   allocated through `__malloc`, the parser writes through an out-pointer, and
   fields are read via the built-in `load_i64`.
+- `scripts/check-db-persistence.sh` certifies only DB persistence against a
+  fixed file SQLite database. The fixture opens the database, creates a
+  `monitor_tasks` table, inserts one row, closes the connection, reopens the
+  file, and verifies the persisted row through a `SELECT
+  COUNT(*)/SUM(priority)/SUM(title_len)` query. Persistence is observed
+  through integer columns only — text columns are not part of the allowlist.
+  Path/SQL/text arguments cross the C boundary through explicit `as i64`
+  casts.
 - Broader runtime behavior remains out of scope until named fixtures exist.
 
 Recover the old tree only for comparison:

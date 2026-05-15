@@ -17,6 +17,7 @@ from the official Vais docs without relying on hidden project memory.
 - Adapter readiness gate: `scripts/check-adapter-readiness.sh`
 - HTTP listener lifecycle gate: `scripts/check-http-adapter.sh`
 - HTTP request parsing/routing gate: `scripts/check-http-request.sh`
+- DB persistence gate: `scripts/check-db-persistence.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
 
@@ -54,5 +55,16 @@ Current HTTP adapter certification is limited to two narrow fixtures:
   explicit C ABI: a 64-byte output buffer is allocated, the parser writes
   through an out-pointer, and fields are read via the built-in `load_i64`.
 
-This is not API response writing, persistence, accepting client connections,
-or production server completion.
+Current DB adapter certification is limited to one narrow fixture:
+
+- Persistence (open / drop / create / insert / close / reopen / select /
+  close) through `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
+  `__sqlite_prepare`, `__sqlite_bind_int`, `__sqlite_bind_text`,
+  `__sqlite_step`, `__sqlite_column_int`, `__sqlite_finalize`,
+  `__sqlite_last_insert_rowid`, and `__sqlite_changes` in
+  `server/src/db_persistence.vais`. Persistence is observed through integer
+  columns only.
+
+This is not API response writing, accepting client connections, multi-row
+text reads, transactions, schema migration, query helpers, or production
+server completion.

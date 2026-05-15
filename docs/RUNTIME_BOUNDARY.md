@@ -13,6 +13,9 @@ slice has both IR and native smoke gates.
   and `scripts/check-http-adapter.sh`
 - HTTP request parsing/routing through `server/src/http_request.vais`
   and `scripts/check-http-request.sh`
+- DB persistence (open / drop / create / insert / close / reopen / select /
+  close) through `server/src/db_persistence.vais` and
+  `scripts/check-db-persistence.sh`
 - Playground source synchronization through `playground/monitor.vais`
 - Static web build through `web/`
 
@@ -55,6 +58,33 @@ declared with raw `i64` pointer arguments and Vais string literals are passed
 to `__str_eq` through an explicit `as i64` boundary. This avoids passing Vais
 fat strings into a C function that expects two pointer arguments.
 
+`server/src/db_persistence.vais` may call only:
+
+- `__sqlite_open`
+- `__sqlite_close`
+- `__sqlite_exec`
+- `__sqlite_prepare`
+- `__sqlite_bind_int`
+- `__sqlite_bind_text`
+- `__sqlite_step`
+- `__sqlite_column_int`
+- `__sqlite_finalize`
+- `__sqlite_last_insert_rowid`
+- `__sqlite_changes`
+
+These certify that the monitor app can open a SQLite file database, create the
+`monitor_tasks` table, insert one row, close the connection, reopen the
+underlying file, and observe the persisted row through a numeric `SELECT`
+query. The fixture uses `SQLITE_OK=0`, `SQLITE_ROW=100`, and `SQLITE_DONE=101`.
+It pins the database file to `/tmp/vais-monitor-db-persistence.sqlite` and the
+script removes that file plus its `-wal`/`-shm` siblings before and after each
+run. The fixture does not certify multi-row reads through
+`__sqlite_column_text` (it persists `title_len` as an integer column instead),
+schema migration, transactions, query helpers, or any other `__sqlite_*`
+symbol. Runtime symbols are declared with raw `i64` pointer arguments and Vais
+string literals cross the C boundary through explicit `as i64` casts so the
+runtime never receives a Vais fat string in a pointer slot.
+
 ## Still Blocked
 
 Do not call these runtime families from the reference app source until this
@@ -64,6 +94,11 @@ repository adds another narrowed fixture for the exact symbols being used:
 - other `__tcp_*` symbols (only `__tcp_listen`/`__tcp_close` are certified)
 - other HTTP runtime symbols (only `__strlen`, `__find_header_end`,
   `__parse_request`, `__str_eq`, `__malloc`, and `__free` are certified)
+- other `__sqlite_*` symbols (only `__sqlite_open`, `__sqlite_close`,
+  `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
+  `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
+  `__sqlite_finalize`, `__sqlite_last_insert_rowid`, and `__sqlite_changes`
+  are certified)
 - `db_*`
 - `ws_*`
 

@@ -45,6 +45,18 @@ from a clean vertical slice using the current official Vais docs.
   runs the listener lifecycle smoke.
 - `scripts/check-http-request.sh`: emits IR, links the HTTP runtime fixture, and
   runs the request parsing/routing smoke against fixed raw HTTP requests.
+- `server/src/db_persistence.vais`: monitor-specific DB persistence fixture. It
+  certifies `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
+  `__sqlite_prepare`, `__sqlite_bind_int`, `__sqlite_bind_text`,
+  `__sqlite_step`, `__sqlite_column_int`, `__sqlite_finalize`,
+  `__sqlite_last_insert_rowid`, and `__sqlite_changes` against the public
+  SQLite runtime. The fixture opens a file database, creates `monitor_tasks`,
+  inserts one row, closes the connection, reopens the file, and verifies the
+  persisted row through `SELECT COUNT(*)/SUM(priority)/SUM(title_len)`.
+  Path/SQL/text arguments cross the C boundary through explicit `as i64`
+  casts.
+- `scripts/check-db-persistence.sh`: emits IR, links the SQLite runtime fixture
+  (`std/sqlite_runtime.c` plus `-lsqlite3`), and runs the persistence smoke.
 - `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
   hosted gate execution.
 
@@ -88,10 +100,12 @@ Read in this order before writing any Vais:
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
 `scripts/check-adapter-readiness.sh --require-promoted` passes against the
-current compiler baseline. Two monitor-specific HTTP fixtures are now certified:
-listener open/close, and request parsing/routing on fixed raw HTTP strings. The
-next implementation slice is DB persistence; broaden only after each new slice
-is reproducible from a clean checkout.
+current compiler baseline. Three monitor-specific fixtures are now certified:
+HTTP listener open/close, HTTP request parsing/routing on fixed raw HTTP
+strings, and DB persistence across close/reopen on a fixed SQLite file
+database. The next implementation slice is HTTP response writing or client
+accept (once a narrow upstream gate covers the exact runtime symbols);
+broaden only after each new slice is reproducible from a clean checkout.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

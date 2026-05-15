@@ -52,13 +52,30 @@
 - Narrowed `scripts/check-runtime-boundary.sh` further so each fixture has an
   exact per-file allowlist; broader HTTP, DB, and WS symbols remain blocked
   across `server/src` and `playground`.
+- Added `server/src/db_persistence.vais` and
+  `scripts/check-db-persistence.sh` to certify the first monitor-specific DB
+  persistence slice: it opens a SQLite file database, creates the
+  `monitor_tasks` table, inserts one row through prepared statements, verifies
+  `__sqlite_last_insert_rowid` and `__sqlite_changes`, closes the connection,
+  reopens the file, and confirms the persisted row through a `SELECT
+  COUNT(*)/SUM(priority)/SUM(title_len)` query. The fixture exercises only
+  `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`,
+  `__sqlite_bind_int`, `__sqlite_bind_text`, `__sqlite_step`,
+  `__sqlite_column_int`, `__sqlite_finalize`, `__sqlite_last_insert_rowid`,
+  and `__sqlite_changes` through their explicit C ABI (Vais string literals
+  cross the boundary through `as i64` casts).
+- Narrowed `scripts/check-runtime-boundary.sh` so the SQLite symbol allowlist
+  applies only to `server/src/db_persistence.vais`; other DB symbols and any
+  WS or expanded HTTP runtime symbols remain blocked across `server/src` and
+  `playground`.
 
 ## Next
 
-1. Add DB persistence after the HTTP request fixture is reproducible from a
-   clean checkout.
-2. Add a fixture for HTTP response writing or client accept once a named
+1. Add a fixture for HTTP response writing or client accept once a named
    upstream gate covers the exact runtime symbols.
+2. Broaden DB persistence (query helpers, multiple rows, schema migration)
+   only after a new monitor-specific fixture certifies the additional
+   `__sqlite_*` surface required.
 3. Replace the static TypeScript task state with data produced through the Vais
    adapter path.
 

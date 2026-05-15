@@ -15,8 +15,9 @@ Current public evidence from the sibling Vais checkout:
 - DB/server/web runtime main gate: promoted by compiler PR #53
 
 This means HTTP/DB adapter work may now start, but it does not make monitor
-complete by itself. Two monitor-specific HTTP adapter fixtures are now allowed,
-each with its own narrowed symbol set:
+complete by itself. Two monitor-specific HTTP adapter fixtures and one
+monitor-specific DB persistence fixture are now allowed, each with its own
+narrowed symbol set:
 
 - `server/src/http_adapter.vais` allows only `__tcp_listen`/`__tcp_close`.
 - `server/src/http_request.vais` allows only `__strlen`,
@@ -26,6 +27,16 @@ each with its own narrowed symbol set:
   parser fills it through an out-pointer, fields are read via the built-in
   `load_i64`, and the buffer is released through `__free`. Vais string
   literals cross the C boundary through explicit `as i64` casts.
+- `server/src/db_persistence.vais` allows only `__sqlite_open`,
+  `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
+  `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
+  `__sqlite_finalize`, `__sqlite_last_insert_rowid`, and `__sqlite_changes`.
+  The fixture opens a file database, creates `monitor_tasks`, inserts one
+  row, closes the connection, reopens the file, and verifies the persisted
+  row through `SELECT COUNT(*)/SUM(priority)/SUM(title_len)`. Path/SQL/text
+  arguments are passed through the explicit C ABI (`char*` declared as `i64`,
+  Vais string literals cast with `as i64`). Persistence is observed through
+  integer columns only — `__sqlite_column_text` is not part of the allowlist.
 
 ## Gate
 
@@ -60,7 +71,8 @@ An adapter task may begin only when all of these are true:
 
 The current fixtures satisfy this rule only for the narrow symbol sets named
 above. Broader HTTP runtime symbols (response writing, accepting connections),
-DB symbols, or WebSocket symbols each need a new fixture and a matching
+broader `__sqlite_*` symbols (query helpers, text columns, transactions,
+schema migration), or WebSocket symbols each need a new fixture and a matching
 boundary update before they may enter `server/src` or `playground`.
 
 If the upstream wording changes but the intended certification is equivalent,
