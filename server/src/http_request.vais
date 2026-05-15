@@ -1,0 +1,183 @@
+# Monitor HTTP request parsing/routing fixture.
+# This file is the second monitor-specific HTTP slice. It parses fixed raw HTTP
+# request strings using the public HTTP runtime, routes them to monitor route
+# codes, and asserts the expected codes deterministically. It does not start a
+# long-running server: only deterministic in-memory parsing is exercised here.
+#
+# The runtime parser uses an explicit C ABI: VaisRequest is a 64-byte output
+# struct returned via an out-pointer, and string fields are plain C char*.
+# We therefore declare every runtime symbol with i64 pointer arguments and
+# read the result through load_i64 against the raw output buffer.
+
+impl fn __strlen(s: i64) -> i64
+impl fn __find_header_end(buffer: i64, len: i64) -> i64
+impl fn __parse_request(out: i64, buffer: i64, len: i64) -> i64
+impl fn __str_eq(a: i64, b: i64) -> i64
+impl fn __malloc(size: i64) -> i64
+impl fn __free(ptr: i64) -> i64
+
+# VaisRequest C layout (see std/http_runtime.c):
+#   offset 0:  method          i64
+#   offset 8:  path            char*
+#   offset 16: version         char*
+#   offset 24: header_items    pointer
+#   offset 32: header_count    i64
+#   offset 40: header_capacity i64
+#   offset 48: body            pointer
+#   offset 56: body_len        i64
+fn request_size() -> i64 { 64 }
+
+fn offset_method() -> i64 { 0 }
+fn offset_path() -> i64 { 8 }
+fn offset_version() -> i64 { 16 }
+fn offset_header_items() -> i64 { 24 }
+fn offset_body() -> i64 { 48 }
+fn offset_body_len() -> i64 { 56 }
+
+# Route codes returned by route_for.
+fn route_health() -> i64 { 1 }
+fn route_tasks() -> i64 { 2 }
+fn route_not_found() -> i64 { 404 }
+fn route_method_not_allowed() -> i64 { 405 }
+
+# HTTP method codes from std/http_runtime.c parse_method:
+#   1 = GET, 2 = POST, ...
+fn method_get() -> i64 { 1 }
+
+fn path_eq(path_ptr: i64, expected: i64) -> i64 {
+    __str_eq(path_ptr, expected)
+}
+
+fn route_for(method: i64, path_ptr: i64) -> i64 {
+    I path_eq(path_ptr, "/health" as i64) == 1 {
+        I method == method_get() {
+            return route_health()
+        }
+        return route_method_not_allowed()
+    }
+    I path_eq(path_ptr, "/tasks" as i64) == 1 {
+        I method == method_get() {
+            return route_tasks()
+        }
+        return route_method_not_allowed()
+    }
+    route_not_found()
+}
+
+# Free the path/version C strings owned by the parsed VaisRequest.
+# The body pointer aliases into the raw request buffer and must NOT be freed.
+# header_items is a raw allocation; we drop it without walking each entry to
+# keep this fixture small (the process exits immediately afterwards).
+fn release_request(out: i64) -> i64 {
+    path_ptr := load_i64(out + offset_path())
+    I path_ptr != 0 {
+        __free(path_ptr)
+    }
+    version_ptr := load_i64(out + offset_version())
+    I version_ptr != 0 {
+        __free(version_ptr)
+    }
+    header_items := load_i64(out + offset_header_items())
+    I header_items != 0 {
+        __free(header_items)
+    }
+    0
+}
+
+fn parse_and_route(raw: str) -> i64 {
+    raw_ptr := raw as i64
+    len := __strlen(raw_ptr)
+    I len <= 0 {
+        return -1
+    }
+    out := __malloc(request_size())
+    I out == 0 {
+        return -2
+    }
+    __parse_request(out, raw_ptr, len)
+    method := load_i64(out + offset_method())
+    path_ptr := load_i64(out + offset_path())
+    code := route_for(method, path_ptr)
+    release_request(out)
+    __free(out)
+    code
+}
+
+fn header_end_offset(raw: str) -> i64 {
+    raw_ptr := raw as i64
+    len := __strlen(raw_ptr)
+    __find_header_end(raw_ptr, len)
+}
+
+fn body_len_of(raw: str) -> i64 {
+    raw_ptr := raw as i64
+    len := __strlen(raw_ptr)
+    I len <= 0 {
+        return -1
+    }
+    out := __malloc(request_size())
+    I out == 0 {
+        return -2
+    }
+    __parse_request(out, raw_ptr, len)
+    body_len := load_i64(out + offset_body_len())
+    release_request(out)
+    __free(out)
+    body_len
+}
+
+fn version_eq(raw: str, expected: str) -> i64 {
+    raw_ptr := raw as i64
+    len := __strlen(raw_ptr)
+    I len <= 0 {
+        return 0
+    }
+    out := __malloc(request_size())
+    I out == 0 {
+        return 0
+    }
+    __parse_request(out, raw_ptr, len)
+    version_ptr := load_i64(out + offset_version())
+    eq := __str_eq(version_ptr, expected as i64)
+    release_request(out)
+    __free(out)
+    eq
+}
+
+fn main() -> i64 {
+    health_raw := "GET /health HTTP/1.1\r\nHost: monitor.local\r\n\r\n"
+    tasks_raw := "GET /tasks HTTP/1.1\r\nHost: monitor.local\r\n\r\n"
+    missing_raw := "GET /missing HTTP/1.1\r\nHost: monitor.local\r\n\r\n"
+    post_health_raw := "POST /health HTTP/1.1\r\nHost: monitor.local\r\n\r\n"
+    body_raw := "POST /tasks HTTP/1.1\r\nHost: monitor.local\r\nContent-Length: 5\r\n\r\nhello"
+
+    I header_end_offset(health_raw) <= 0 {
+        return 10
+    }
+
+    I version_eq(health_raw, "HTTP/1.1") != 1 {
+        return 11
+    }
+
+    I parse_and_route(health_raw) != route_health() {
+        return 1
+    }
+
+    I parse_and_route(tasks_raw) != route_tasks() {
+        return 2
+    }
+
+    I parse_and_route(missing_raw) != route_not_found() {
+        return 3
+    }
+
+    I parse_and_route(post_health_raw) != route_method_not_allowed() {
+        return 4
+    }
+
+    I body_len_of(body_raw) != 5 {
+        return 5
+    }
+
+    0
+}

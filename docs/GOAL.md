@@ -16,6 +16,7 @@ from the official Vais docs without relying on hidden project memory.
 - Runtime boundary gate: `scripts/check-runtime-boundary.sh`
 - Adapter readiness gate: `scripts/check-adapter-readiness.sh`
 - HTTP listener lifecycle gate: `scripts/check-http-adapter.sh`
+- HTTP request parsing/routing gate: `scripts/check-http-request.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
 
@@ -43,6 +44,15 @@ Do not add placeholder runtime calls that only fail at link time. Add a
 monitor-specific runtime fixture and narrow `scripts/check-runtime-boundary.sh`
 before claiming adapter completion.
 
-Current HTTP adapter certification is limited to listener open/close through
-`__tcp_listen` and `__tcp_close`. It is not API request handling, persistence,
+Current HTTP adapter certification is limited to two narrow fixtures:
+
+- Listener open/close through `__tcp_listen` and `__tcp_close` in
+  `server/src/http_adapter.vais`.
+- Request parsing/routing through `__strlen`, `__find_header_end`,
+  `__parse_request`, `__str_eq`, `__malloc`, and `__free` in
+  `server/src/http_request.vais`. The fixture uses the runtime parser's
+  explicit C ABI: a 64-byte output buffer is allocated, the parser writes
+  through an out-pointer, and fields are read via the built-in `load_i64`.
+
+This is not API response writing, persistence, accepting client connections,
 or production server completion.

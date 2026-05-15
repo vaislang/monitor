@@ -15,8 +15,17 @@ Current public evidence from the sibling Vais checkout:
 - DB/server/web runtime main gate: promoted by compiler PR #53
 
 This means HTTP/DB adapter work may now start, but it does not make monitor
-complete by itself. The first monitor-specific HTTP adapter fixture now allows
-only listener lifecycle symbols in `server/src/http_adapter.vais`.
+complete by itself. Two monitor-specific HTTP adapter fixtures are now allowed,
+each with its own narrowed symbol set:
+
+- `server/src/http_adapter.vais` allows only `__tcp_listen`/`__tcp_close`.
+- `server/src/http_request.vais` allows only `__strlen`,
+  `__find_header_end`, `__parse_request`, `__str_eq`, `__malloc`, and
+  `__free`. The runtime parser is invoked through its explicit C ABI: a
+  64-byte `VaisRequest` output buffer is allocated through `__malloc`, the
+  parser fills it through an out-pointer, fields are read via the built-in
+  `load_i64`, and the buffer is released through `__free`. Vais string
+  literals cross the C boundary through explicit `as i64` casts.
 
 ## Gate
 
@@ -49,9 +58,10 @@ An adapter task may begin only when all of these are true:
    certified symbols, not the entire runtime family.
 5. A monitor-specific runtime fixture is added before any completion claim.
 
-The current fixture satisfies this rule only for `__tcp_listen` and
-`__tcp_close`. Broader HTTP, DB, or WS behavior needs a new fixture and a
-matching boundary update.
+The current fixtures satisfy this rule only for the narrow symbol sets named
+above. Broader HTTP runtime symbols (response writing, accepting connections),
+DB symbols, or WebSocket symbols each need a new fixture and a matching
+boundary update before they may enter `server/src` or `playground`.
 
 If the upstream wording changes but the intended certification is equivalent,
 update this script and document the exact public gate name in the same commit.

@@ -26,8 +26,14 @@ from a clean vertical slice using the current official Vais docs.
   linking server/db/ws runtime symbols.
 - `server/build.sh --native`: builds and runs the pure Vais domain smoke.
 - `server/src/http_adapter.vais`: monitor-specific HTTP listener lifecycle
-  fixture. It certifies `__tcp_listen`/`__tcp_close` only; request handling is
-  not claimed yet.
+  fixture. It certifies `__tcp_listen`/`__tcp_close` only.
+- `server/src/http_request.vais`: monitor-specific HTTP request parsing/routing
+  fixture. It certifies `__strlen`, `__find_header_end`, `__parse_request`,
+  `__str_eq`, `__malloc`, and `__free` against fixed raw HTTP requests by
+  calling the runtime parser through its explicit C ABI: a 64-byte
+  `VaisRequest` output buffer is allocated, `__parse_request(out, raw_ptr,
+  len)` populates it, and fields are read via the built-in `load_i64`. The
+  fixture does not start a long-running server.
 - `playground/monitor.vais`: playground copy of the same domain source. Keep it
   synchronized with `scripts/sync-playground-example.sh`.
 - `web/`: static Vite shell that displays the same seed monitor task state.
@@ -37,6 +43,8 @@ from a clean vertical slice using the current official Vais docs.
   runtime evidence has been promoted enough to start HTTP/DB adapter work.
 - `scripts/check-http-adapter.sh`: emits IR, links the HTTP runtime fixture, and
   runs the listener lifecycle smoke.
+- `scripts/check-http-request.sh`: emits IR, links the HTTP runtime fixture, and
+  runs the request parsing/routing smoke against fixed raw HTTP requests.
 - `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
   hosted gate execution.
 
@@ -79,11 +87,11 @@ Read in this order before writing any Vais:
 ## Next
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
-`scripts/check-adapter-readiness.sh --require-promoted` now passes against the
-current compiler baseline, and the first monitor-specific HTTP adapter fixture
-now certifies listener open/close behavior. The next implementation slice is
-request parsing/routing for the monitor API. DB persistence follows only after
-the HTTP request fixture is reproducible.
+`scripts/check-adapter-readiness.sh --require-promoted` passes against the
+current compiler baseline. Two monitor-specific HTTP fixtures are now certified:
+listener open/close, and request parsing/routing on fixed raw HTTP strings. The
+next implementation slice is DB persistence; broaden only after each new slice
+is reproducible from a clean checkout.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

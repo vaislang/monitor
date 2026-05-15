@@ -16,9 +16,14 @@ The rewrite starts with the smallest evidence-backed slice:
   git worktree.
 - `scripts/check-runtime-boundary.sh` prevents uncertified HTTP/DB/WS runtime
   calls from returning unnoticed.
-- `scripts/check-http-adapter.sh` now certifies only HTTP listener open/close
-  wiring; broader runtime behavior remains out of scope until named fixtures
-  exist.
+- `scripts/check-http-adapter.sh` certifies only HTTP listener open/close
+  wiring.
+- `scripts/check-http-request.sh` certifies only HTTP request parsing/routing
+  for fixed raw HTTP strings (no long-running server). The fixture uses the
+  runtime parser's explicit C ABI: a 64-byte `VaisRequest` output buffer is
+  allocated through `__malloc`, the parser writes through an out-pointer, and
+  fields are read via the built-in `load_i64`.
+- Broader runtime behavior remains out of scope until named fixtures exist.
 
 Recover the old tree only for comparison:
 

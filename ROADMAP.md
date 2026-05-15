@@ -38,13 +38,27 @@
 - Narrowed `scripts/check-runtime-boundary.sh` so those two HTTP listener
   lifecycle symbols are allowed only in the dedicated adapter fixture; DB, WS,
   request handling, and broader server symbols remain blocked.
+- Added `server/src/http_request.vais` and
+  `scripts/check-http-request.sh` to certify the monitor-specific HTTP request
+  parsing/routing slice. The fixture parses fixed raw HTTP requests through
+  `__strlen`, `__find_header_end`, `__parse_request`, `__str_eq`, `__malloc`,
+  and `__free` and routes them to monitor-specific route codes without
+  starting a long-running server. The runtime parser is called through its
+  explicit C ABI: a 64-byte `VaisRequest` output buffer is allocated, the
+  parser writes into it through an out-pointer, and fields are read via the
+  built-in `load_i64`. Vais string literals cross the C boundary through
+  explicit `as i64` casts so the parser never receives a Vais fat string in a
+  pointer slot.
+- Narrowed `scripts/check-runtime-boundary.sh` further so each fixture has an
+  exact per-file allowlist; broader HTTP, DB, and WS symbols remain blocked
+  across `server/src` and `playground`.
 
 ## Next
 
-1. Add a monitor-specific HTTP request fixture for parsing/routing the monitor
-   API without starting a long-running server in CI.
-2. Add DB persistence after the HTTP request fixture is reproducible from a
+1. Add DB persistence after the HTTP request fixture is reproducible from a
    clean checkout.
+2. Add a fixture for HTTP response writing or client accept once a named
+   upstream gate covers the exact runtime symbols.
 3. Replace the static TypeScript task state with data produced through the Vais
    adapter path.
 
