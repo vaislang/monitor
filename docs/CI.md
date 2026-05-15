@@ -45,5 +45,9 @@ Hosted CI has been verified:
 - Included checks: adapter readiness status, IR layout, runtime boundary,
   playground sync, and web build
 
+Current local reference gates also include `scripts/check-http-adapter.sh`, which
+links the HTTP runtime fixture with `std/http_runtime.c` before running it.
+Re-run hosted CI after pushing this broadened gate.
+
 Treat hosted CI as required evidence for future broadening when a change touches
 the compiler gate, runtime-boundary gate, playground source, or web shell.

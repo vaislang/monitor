@@ -20,9 +20,10 @@ After pushing changes, verify the hosted workflow:
 gh run list --repo vaislang/monitor --limit 5
 ```
 
-The server slice is intentionally IR-only. It validates current Vais language
-surface without pretending that DB/server/ws runtime symbols are ready for this
-reference app.
+The main server slice is intentionally domain-only. It validates current Vais
+language surface through IR and native smoke gates. The separate
+`server/src/http_adapter.vais` fixture certifies only HTTP listener open/close
+runtime wiring.
 
 `playground/monitor.vais` is a synchronized copy of `server/src/main.vais`. If
 the server source changes, run `scripts/sync-playground-example.sh` before the
@@ -48,6 +49,10 @@ Before adding HTTP or DB runtime code, run:
 scripts/check-adapter-readiness.sh --require-promoted
 ```
 
-At the current baseline this is expected to fail, because the public status has
-individual DB/server runtime smokes but not a promoted single DB/server/web
-runtime main gate.
+At the current baseline this is expected to pass. Passing this precondition only
+opens adapter work; it does not replace the need for a monitor-specific runtime
+fixture and a narrowed runtime-boundary gate.
+
+The current HTTP fixture allows only `__tcp_listen` and `__tcp_close`. The next
+adapter task is request parsing/routing; DB persistence and web data wiring are
+still later slices.

@@ -6,6 +6,7 @@ from the official Vais docs without relying on hidden project memory.
 ## Certified Current Scope
 
 - Language/compiler slice: `server/src/main.vais`
+- Native domain smoke: `server/build.sh --native`
 - Playground sample: `playground/monitor.vais`, synchronized from the server
   source
 - Web shell: `web/`
@@ -14,6 +15,7 @@ from the official Vais docs without relying on hidden project memory.
   committed
 - Runtime boundary gate: `scripts/check-runtime-boundary.sh`
 - Adapter readiness gate: `scripts/check-adapter-readiness.sh`
+- HTTP listener lifecycle gate: `scripts/check-http-adapter.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
 
@@ -27,13 +29,20 @@ No new surface is considered done until it has:
 4. A clean-checkout verification path.
 5. Hosted CI evidence when a remote workflow surface exists.
 
-## Blocked Surfaces
+## Runtime Adapter Surfaces
 
-HTTP and DB adapters stay blocked until the corresponding server/db runtime
-symbols have reproducible named gates for this app shape. The precondition is:
+HTTP and DB adapter work is allowed only after the corresponding server/db
+runtime symbols have reproducible named gates for this app shape. The
+precondition is:
 
 ```bash
 scripts/check-adapter-readiness.sh --require-promoted
 ```
 
-Do not add placeholder runtime calls that only fail at link time.
+Do not add placeholder runtime calls that only fail at link time. Add a
+monitor-specific runtime fixture and narrow `scripts/check-runtime-boundary.sh`
+before claiming adapter completion.
+
+Current HTTP adapter certification is limited to listener open/close through
+`__tcp_listen` and `__tcp_close`. It is not API request handling, persistence,
+or production server completion.

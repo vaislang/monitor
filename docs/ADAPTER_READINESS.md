@@ -6,18 +6,17 @@ single DB/server/web runtime path needed by this app shape.
 
 ## Current Decision
 
-Status: blocked.
+Status: promoted precondition available.
 
 Current public evidence from the sibling Vais checkout:
 
 - VaisDB runtime smoke: `34/34`
 - Vais Server runtime smoke: `20/20`
-- Full ecosystem runtime aggregate runner: still pending as a single
-  main-reproducible DB/server/web runtime gate
+- DB/server/web runtime main gate: promoted by compiler PR #53
 
-The first two lines prove bounded package behavior. They do not prove that this
-reference app can safely call server, database, or websocket runtime symbols
-without creating link-time or semantic drift.
+This means HTTP/DB adapter work may now start, but it does not make monitor
+complete by itself. The first monitor-specific HTTP adapter fixture now allows
+only listener lifecycle symbols in `server/src/http_adapter.vais`.
 
 ## Gate
 
@@ -33,12 +32,12 @@ Before implementing HTTP or DB adapters, require promotion explicitly:
 scripts/check-adapter-readiness.sh --require-promoted
 ```
 
-`--require-promoted` must pass before adding calls such as `server_listen*`,
-`db_*`, or `ws_*` to `server/src` or `playground`.
+`--require-promoted` must pass before adding new calls such as `server_listen*`,
+other `__tcp_*`, `db_*`, or `ws_*` to `server/src` or `playground`.
 
 ## Promotion Rule
 
-A future adapter task may begin only when all of these are true:
+An adapter task may begin only when all of these are true:
 
 1. `compiler/PUBLIC_STATUS.md` names a promoted single DB/server/web runtime
    main gate.
@@ -49,6 +48,10 @@ A future adapter task may begin only when all of these are true:
 4. `scripts/check-runtime-boundary.sh` is narrowed to allow only the newly
    certified symbols, not the entire runtime family.
 5. A monitor-specific runtime fixture is added before any completion claim.
+
+The current fixture satisfies this rule only for `__tcp_listen` and
+`__tcp_close`. Broader HTTP, DB, or WS behavior needs a new fixture and a
+matching boundary update.
 
 If the upstream wording changes but the intended certification is equivalent,
 update this script and document the exact public gate name in the same commit.

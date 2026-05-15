@@ -23,14 +23,20 @@ from a clean vertical slice using the current official Vais docs.
 - `server/src/main.vais`: pure Vais domain core using `fn`, `struct`, `enum`,
   `Option<T>`, `Result<T, E>`, and `match`.
 - `server/build.sh --ir-only`: emits LLVM IR to a temporary directory without
-  linking unfinished server/db/ws runtime symbols.
+  linking server/db/ws runtime symbols.
+- `server/build.sh --native`: builds and runs the pure Vais domain smoke.
+- `server/src/http_adapter.vais`: monitor-specific HTTP listener lifecycle
+  fixture. It certifies `__tcp_listen`/`__tcp_close` only; request handling is
+  not claimed yet.
 - `playground/monitor.vais`: playground copy of the same domain source. Keep it
   synchronized with `scripts/sync-playground-example.sh`.
 - `web/`: static Vite shell that displays the same seed monitor task state.
-- `scripts/check-runtime-boundary.sh`: rejects uncertified HTTP/DB/WS runtime
-  calls until named gates exist for this app shape.
+- `scripts/check-runtime-boundary.sh`: allows only the named HTTP listener
+  lifecycle symbols and rejects uncertified DB/WS/server calls.
 - `scripts/check-adapter-readiness.sh`: reports whether public DB/server/web
   runtime evidence has been promoted enough to start HTTP/DB adapter work.
+- `scripts/check-http-adapter.sh`: emits IR, links the HTTP runtime fixture, and
+  runs the listener lifecycle smoke.
 - `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
   hosted gate execution.
 
@@ -73,9 +79,11 @@ Read in this order before writing any Vais:
 ## Next
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
-HTTP and DB adapters stay blocked until `scripts/check-adapter-readiness.sh
---require-promoted` passes and their runtime symbols have named reproducible
-gates for this app shape.
+`scripts/check-adapter-readiness.sh --require-promoted` now passes against the
+current compiler baseline, and the first monitor-specific HTTP adapter fixture
+now certifies listener open/close behavior. The next implementation slice is
+request parsing/routing for the monitor API. DB persistence follows only after
+the HTTP request fixture is reproducible.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

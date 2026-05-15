@@ -16,6 +16,9 @@ The rewrite starts with the smallest evidence-backed slice:
   git worktree.
 - `scripts/check-runtime-boundary.sh` prevents uncertified HTTP/DB/WS runtime
   calls from returning unnoticed.
+- `scripts/check-http-adapter.sh` now certifies only HTTP listener open/close
+  wiring; broader runtime behavior remains out of scope until named fixtures
+  exist.
 
 Recover the old tree only for comparison:
 

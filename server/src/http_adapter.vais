@@ -1,0 +1,32 @@
+# Monitor HTTP adapter smoke fixture.
+# This file certifies only listener lifecycle wiring. Request handling stays out
+# until the monitor route contract and parser boundary are specified.
+
+impl fn __tcp_listen(port: i64) -> i64
+impl fn __tcp_close(fd: i64) -> i64
+
+fn open_listener() -> i64 {
+    listener := __tcp_listen(0)
+    I listener < 0 {
+        return -1
+    }
+    listener
+}
+
+fn close_listener(listener: i64) -> i64 {
+    __tcp_close(listener)
+}
+
+fn main() -> i64 {
+    listener := open_listener()
+    I listener < 0 {
+        return 1
+    }
+
+    close_result := close_listener(listener)
+    I close_result != 0 {
+        return 2
+    }
+
+    0
+}

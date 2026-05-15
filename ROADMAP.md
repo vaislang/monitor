@@ -23,15 +23,30 @@
   `docs/ADAPTER_READINESS.md` so HTTP/DB adapter promotion has an explicit
   upstream evidence gate instead of relying on inference from individual package
   smokes.
+- Refreshed the domain source for the current compiler by avoiding deprecated
+  single-character generic parameter names and by using return-based match arms
+  where scalar `Result` match expressions still expose invalid LLVM phi output.
+- Updated the IR layout gate to check the current structural i32-tag
+  `Option`/`Result` signatures without rejecting compact non-generic enum
+  layout for `TaskState`.
+- Added `server/build.sh --native` and included it in
+  `scripts/check-reference-gates.sh` so the pure Vais domain slice now builds
+  and executes, not only emits IR.
+- Added `server/src/http_adapter.vais` and
+  `scripts/check-http-adapter.sh` to certify the first monitor-specific HTTP
+  runtime slice: listener open/close through `__tcp_listen` and `__tcp_close`.
+- Narrowed `scripts/check-runtime-boundary.sh` so those two HTTP listener
+  lifecycle symbols are allowed only in the dedicated adapter fixture; DB, WS,
+  request handling, and broader server symbols remain blocked.
 
 ## Next
 
-1. Run `scripts/check-adapter-readiness.sh --require-promoted` before starting
-   any HTTP or DB adapter implementation.
-2. Add an HTTP adapter only after the server runtime symbols are promoted into a
-   reproducible main-branch gate for this app shape.
-3. Add DB persistence only after the DB runtime path has a named gate for this
-   app shape.
+1. Add a monitor-specific HTTP request fixture for parsing/routing the monitor
+   API without starting a long-running server in CI.
+2. Add DB persistence after the HTTP request fixture is reproducible from a
+   clean checkout.
+3. Replace the static TypeScript task state with data produced through the Vais
+   adapter path.
 
 ## Completion Rule
 

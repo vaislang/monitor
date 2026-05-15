@@ -1,14 +1,14 @@
 # Monitor reference slice: pure domain core only.
 # Do not link unfinished db/server/ws runtime symbols from this file.
 
-enum Option<T> {
+enum Option<Value> {
     None,
-    Some(T),
+    Some(Value),
 }
 
-enum Result<T, E> {
-    Ok(T),
-    Err(E),
+enum Result<Value, Error> {
+    Ok(Value),
+    Err(Error),
 }
 
 enum TaskState {
@@ -119,11 +119,17 @@ fn find_summary_score(id: i64) -> Result<i64, str> {
     }
 }
 
-fn summary_score_or_zero(id: i64) -> i64 {
-    match find_summary_score(id) {
-        Ok(score) => score,
-        Err(_message) => 0,
+fn main() -> i64 {
+    first := find_summary_score(1)
+    match first {
+        Ok(_score) => {
+            missing := find_summary_score(404)
+            match missing {
+                Ok(_unexpected) => { return 1 },
+                Err(_message) => { return 0 },
+            }
+        },
+        Err(_message) => { return 1 },
     }
+    1
 }
-
-fn main() -> i64 = summary_score_or_zero(1) + summary_score_or_zero(404)

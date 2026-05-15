@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE="$ROOT_DIR/server/src/main.vais"
 OUT_DIR="${MONITOR_OUT_DIR:-${TMPDIR:-/tmp}/vais-monitor}"
 OUT_FILE="$OUT_DIR/monitor.ll"
+BIN_FILE="$OUT_DIR/monitor"
 LOG_FILE="$OUT_DIR/monitor.vaisc.log"
 OBJ_FILE="$OUT_DIR/monitor.o"
 CLANG_LOG="$OUT_DIR/monitor.clang.log"
@@ -60,10 +61,12 @@ case "$MODE" in
     fi
     cat "$LOG_FILE"
     test -s "$OUT_FILE"
-    grep -q '^%Option = type { i32,' "$OUT_FILE"
-    grep -q '^%Result = type { i32,' "$OUT_FILE"
-    if grep -q '{ i8, i64 }' "$OUT_FILE"; then
-      echo "anonymous i8 enum layout found; expected canonical i32 tag layout" >&2
+    grep -q '^define { i32, { i64 } } @seed_title_len' "$OUT_FILE"
+    grep -q '^define { i32, { i64 } } @validate_title_len' "$OUT_FILE"
+    grep -q '^define { i32, { i64 } } @summarize' "$OUT_FILE"
+    grep -q '^define { i32, { i64 } } @find_summary_score' "$OUT_FILE"
+    if grep -Eq '^define \{ i8, i64 \} @(seed_title_len|validate_title_len|summarize|find_summary_score)\b' "$OUT_FILE"; then
+      echo "generic Option/Result i8 enum layout found; expected canonical i32 tag layout" >&2
       exit 1
     fi
     if command -v clang >/dev/null 2>&1; then
@@ -75,8 +78,18 @@ case "$MODE" in
     fi
     echo "IR emitted: $OUT_FILE"
     ;;
+  --native)
+    if ! "$VAISC" "$SOURCE" -o "$BIN_FILE" --no-update-check >"$LOG_FILE" 2>&1; then
+      cat "$LOG_FILE" >&2
+      exit 1
+    fi
+    cat "$LOG_FILE"
+    test -x "$BIN_FILE"
+    "$BIN_FILE"
+    echo "native smoke passed: $BIN_FILE"
+    ;;
   *)
-    echo "Usage: ./build.sh --ir-only" >&2
+    echo "Usage: ./build.sh [--ir-only|--native]" >&2
     exit 2
     ;;
 esac
