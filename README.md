@@ -27,6 +27,8 @@ from a clean vertical slice using the current official Vais docs.
 - `web/`: static Vite shell that displays the same seed monitor task state.
 - `scripts/check-runtime-boundary.sh`: rejects uncertified HTTP/DB/WS runtime
   calls until named gates exist for this app shape.
+- `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
+  hosted gate execution once this repo has a remote.
 
 ## Verify
 
@@ -61,14 +63,14 @@ Read in this order before writing any Vais:
 5. `/Users/sswoo/study/projects/vais/compiler/docs/ai/REFERENCE_APP_CONTRACT.md`
 6. `docs/GOAL.md`
 7. `docs/RUNTIME_BOUNDARY.md`
+8. `docs/CI.md`
 
 ## Next
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
-The next practical step is a clean-checkout CI or automation wrapper for
-`scripts/check-clean-checkout.sh` when this repo has a remote workflow surface.
-HTTP and DB adapters stay blocked until their runtime symbols have named
-reproducible gates for this app shape.
+The next practical step is a hosted CI run after a remote is configured. HTTP and
+DB adapters stay blocked until their runtime symbols have named reproducible
+gates for this app shape.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

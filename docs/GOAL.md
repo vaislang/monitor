@@ -13,6 +13,7 @@ from the official Vais docs without relying on hidden project memory.
 - Clean-checkout gate: `scripts/check-clean-checkout.sh` after changes are
   committed
 - Runtime boundary gate: `scripts/check-runtime-boundary.sh`
+- CI template: `.github/workflows/reference-gates.yml`
 
 ## Acceptance Rule
 
@@ -22,6 +23,7 @@ No new surface is considered done until it has:
 2. A deterministic local verification command.
 3. Documentation that states both the certified behavior and the boundary.
 4. A clean-checkout verification path.
+5. Hosted CI evidence when a remote workflow surface exists.
 
 ## Blocked Surfaces
 

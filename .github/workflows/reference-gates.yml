@@ -1,0 +1,39 @@
+name: Monitor Reference Gates
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+jobs:
+  reference-gates:
+    runs-on: macos-latest
+    steps:
+      - name: Check out monitor
+        uses: actions/checkout@v4
+        with:
+          path: monitor
+
+      - name: Check out Vais compiler
+        uses: actions/checkout@v4
+        with:
+          repository: vaislang/vais
+          path: vais
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build vaisc
+        working-directory: vais/compiler
+        run: cargo build --release -p vaisc
+
+      - name: Run monitor reference gates
+        working-directory: monitor
+        env:
+          VAIS_COMPILER_DIR: ${{ github.workspace }}/vais/compiler
+        run: scripts/check-reference-gates.sh

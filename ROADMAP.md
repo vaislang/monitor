@@ -15,11 +15,13 @@
   has a clean-checkout acceptance path.
 - Added `scripts/check-runtime-boundary.sh` and `docs/RUNTIME_BOUNDARY.md` so
   uncertified HTTP/DB/WS calls cannot silently re-enter the app source.
+- Added `.github/workflows/reference-gates.yml`, `scripts/check-prereqs.sh`, and
+  `docs/CI.md` to make hosted CI setup explicit.
 
 ## Next
 
-1. Add CI or automation that runs `scripts/check-clean-checkout.sh` from a
-   clean checkout when this repo has a remote workflow surface.
+1. Configure a remote for this repo and verify the hosted
+   `Monitor Reference Gates` workflow passes.
 2. Add an HTTP adapter only after the server runtime symbols are promoted into a
    reproducible main-branch gate.
 3. Add DB persistence only after the DB runtime path has a named gate for this

@@ -13,14 +13,39 @@ DEBUG_COMPILER="/Users/sswoo/study/projects/vais/compiler/target/debug/vaisc"
 
 if [[ -n "${VAISC:-}" ]]; then
   VAISC="$VAISC"
+else
+  candidate_compiler_dirs=()
+  if [[ -n "${VAIS_COMPILER_DIR:-}" ]]; then
+    candidate_compiler_dirs+=("$VAIS_COMPILER_DIR")
+  fi
+  candidate_compiler_dirs+=(
+    "$ROOT_DIR/../../vais/compiler"
+    "$ROOT_DIR/../vais/compiler"
+    "/Users/sswoo/study/projects/vais/compiler"
+  )
+
+  for dir in "${candidate_compiler_dirs[@]}"; do
+    if [[ -x "$dir/target/release/vaisc" || -x "$dir/target/debug/vaisc" ]]; then
+      RELEASE_COMPILER="$dir/target/release/vaisc"
+      DEBUG_COMPILER="$dir/target/debug/vaisc"
+      break
+    fi
+  done
+fi
+
+if [[ -x "${VAISC:-}" ]]; then
+  :
 elif [[ -x "$RELEASE_COMPILER" && -x "$DEBUG_COMPILER" && "$DEBUG_COMPILER" -nt "$RELEASE_COMPILER" ]]; then
   VAISC="$DEBUG_COMPILER"
 elif [[ -x "$RELEASE_COMPILER" ]]; then
   VAISC="$RELEASE_COMPILER"
 elif [[ -x "$DEBUG_COMPILER" ]]; then
   VAISC="$DEBUG_COMPILER"
+elif command -v vaisc >/dev/null 2>&1; then
+  VAISC="$(command -v vaisc)"
 else
   echo "vaisc not found. Build the compiler first." >&2
+  echo "Set VAISC or VAIS_COMPILER_DIR if the compiler is outside the default workspace." >&2
   exit 1
 fi
 

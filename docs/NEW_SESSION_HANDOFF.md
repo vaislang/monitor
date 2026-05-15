@@ -30,6 +30,7 @@ compiler repository:
 - `/Users/sswoo/study/projects/vais/compiler/PUBLIC_STATUS.md`
 - `docs/GOAL.md`
 - `docs/RUNTIME_BOUNDARY.md`
+- `docs/CI.md`
 
 If compiler behavior and docs disagree, stop and fix the compiler or docs before
 adding fallback syntax here.
