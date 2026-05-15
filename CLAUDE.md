@@ -1,45 +1,68 @@
 # Vais Monitor
 
-AI 기반 인프라/서비스 모니터링 플랫폼.
+AI-facing project notes for the Vais Monitor reference app rewrite.
 
-## Build & Run
+## Current Status
+
+This repository currently contains a legacy monitor implementation from an older
+Vais development phase. Do not treat the existing app code as the canonical
+reference implementation.
+
+The next implementation pass should rebuild the app from a clean vertical slice
+using the current official Vais docs:
+
+- `/Users/sswoo/study/projects/vais/compiler/docs/ai/LLM_LANGUAGE_CARD.md`
+- `/Users/sswoo/study/projects/vais/compiler/docs/ai/AI_DEVELOPER_GUIDE.md`
+- `/Users/sswoo/study/projects/vais/compiler/docs/ai/REFERENCE_APP_CONTRACT.md`
+- `/Users/sswoo/study/projects/vais/compiler/docs/LANGUAGE_SPEC.md`
+- `/Users/sswoo/study/projects/vais/compiler/PUBLIC_STATUS.md`
+
+## Rewrite Rule
+
+Preserve the current git history, then remove generated artifacts and rewrite the
+app incrementally. Do not carry forward old syntax or unchecked stubs just
+because they exist in the legacy tree.
+
+Current public Vais syntax for new code:
+
+- Use `fn`, `struct`, `enum`, `trait`, `impl`, `type`, `use`, and `pub` where
+  available.
+- Compact control forms such as `I`, `L`, `LF`, `LW`, `B`, `C`, and `D` remain
+  valid where the language spec names them.
+- Use `Result<T, E>`, `Option<T>`, `match`, and explicit conversion boundaries.
+- Do not use old public examples based on `F`, `S`, `EN`, `EL`, `R`, or `U`.
+
+## Project Intent
+
+Vais Monitor should become the official end-to-end reference app for:
+
+- Vais language syntax and type rules
+- Vais compiler native build flow
+- DB/schema usage
+- Server API flow
+- VaisX/web UI flow
+- Runtime and memory stability checks
+- AI-agent onboarding using official docs only
+
+## Local Gates
+
+Use these gates during the rewrite, expanding them only when the narrow slice
+passes:
 
 ```bash
-# 서버 빌드
-cd server && vaisc build src/main.vais -o vais-monitor
+# compiler repo
+cd /Users/sswoo/study/projects/vais/compiler
+cargo fmt --all -- --check
+cargo test -p vais-types --test inference_unification_tests -- --nocapture
+cargo test -p vaisc --test e2e -- --nocapture
+node scripts/check-public-claims.mjs
+node scripts/check-ai-docs-sync.mjs
 
-# 서버 실행
-./vais-monitor --port 8080
-
-# 프론트엔드 빌드
-cd web && vaisc build app/layout.vaisx --target js -o dist/
+# monitor repo
+cd /Users/sswoo/study/projects/vais-apps/monitor
+cd server && ./build.sh --ir-only
+cd ../web && npm run build
 ```
 
-## Test
-
-```bash
-cd server && vaisc test src/
-cd web && vitest run
-```
-
-## Project Structure
-
-- `server/src/` — vais-server 백엔드
-  - `api/` — REST API 핸들러
-  - `models/` — 도메인 모델 + Repository trait
-  - `workers/` — async 백그라운드 워커
-  - `graph/` — 서비스 의존성 그래프
-  - `rag/` — RAG 파이프라인
-  - `graphql/` — GraphQL 스키마/리졸버
-  - `websocket/` — WebSocket 핸들러
-- `web/app/` — VaisX 프론트엔드
-- `web/locales/` — i18n 번역 파일
-- `data/` — 데이터 파일
-
-## Conventions
-
-- vais 단축 키워드 사용: F(함수), S(구조체), EN(열거형), W(트레잇), X(구현), I/EL(if/else), M(매치), R(리턴), A/Y(async/await), U(use), D(defer), G(global)
-- 에러 처리: Result<T, E> + ? 연산자
-- 네이밍: snake_case (함수/변수), PascalCase (타입/트레잇)
-- 모든 public API에 타입 어노테이션 필수
-- DB 쿼리는 QueryBuilder 사용 (문자열 연결 금지)
+See `docs/REWRITE_FROM_SCRATCH.md` and `docs/NEW_SESSION_HANDOFF.md` before
+starting implementation.

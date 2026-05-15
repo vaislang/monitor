@@ -1,3 +1,21 @@
+## 2026-05-15 Reference App Rewrite Decision
+
+The existing implementation is now treated as legacy evidence, not the current
+reference app implementation. The next phase should rebuild Vais Monitor from a
+clean vertical slice using the current official Vais docs and AI onboarding
+contract.
+
+Start here:
+
+- `CLAUDE.md`
+- `docs/REWRITE_FROM_SCRATCH.md`
+- `docs/NEW_SESSION_HANDOFF.md`
+- `/Users/sswoo/study/projects/vais/compiler/docs/ai/LLM_LANGUAGE_CARD.md`
+- `/Users/sswoo/study/projects/vais/compiler/docs/ai/AI_DEVELOPER_GUIDE.md`
+- `/Users/sswoo/study/projects/vais/compiler/docs/ai/REFERENCE_APP_CONTRACT.md`
+
+Do not continue with the old syntax guidance or generated artifacts as source.
+
 ## 설계 결정
 - 기술: vais (언어) + vais-server (백엔드) + vaisdb (DB) + vais-web/VaisX (프론트엔드)
 - 프로젝트: AI 기반 인프라/서비스 모니터링 플랫폼
