@@ -34,6 +34,16 @@ from a clean vertical slice using the current official Vais docs.
   `VaisRequest` output buffer is allocated, `__parse_request(out, raw_ptr,
   len)` populates it, and fields are read via the built-in `load_i64`. The
   fixture does not start a long-running server.
+- `server/src/http_response.vais`: monitor-specific HTTP response loopback
+  fixture. It certifies `__tcp_listen`, `__tcp_connect`, `__tcp_accept`,
+  `__tcp_send`, `__tcp_recv`, `__tcp_close`, `__strlen`, `__malloc`, and
+  `__free` by completing one deterministic in-process HTTP response
+  roundtrip on `127.0.0.1`: it opens a localhost listener on a high port
+  from the small deterministic range `39181..39199`, connects a client,
+  accepts the connection, sends one fixed monitor HTTP response, receives it
+  back (possibly across multiple recv calls), byte-verifies the bytes
+  through the built-in `load_byte`, and closes every opened fd on every
+  success and error path. The fixture does not start a long-running server.
 - `playground/monitor.vais`: playground copy of the same domain source. Keep it
   synchronized with `scripts/sync-playground-example.sh`.
 - `web/`: static Vite shell that displays the same seed monitor task state.
@@ -45,6 +55,9 @@ from a clean vertical slice using the current official Vais docs.
   runs the listener lifecycle smoke.
 - `scripts/check-http-request.sh`: emits IR, links the HTTP runtime fixture, and
   runs the request parsing/routing smoke against fixed raw HTTP requests.
+- `scripts/check-http-response.sh`: emits IR, links the HTTP runtime fixture,
+  and runs the response loopback smoke on `127.0.0.1` from a small
+  deterministic high-port range.
 - `server/src/db_persistence.vais`: monitor-specific DB persistence fixture. It
   certifies `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
   `__sqlite_prepare`, `__sqlite_bind_int`, `__sqlite_bind_text`,
@@ -100,12 +113,14 @@ Read in this order before writing any Vais:
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
 `scripts/check-adapter-readiness.sh --require-promoted` passes against the
-current compiler baseline. Three monitor-specific fixtures are now certified:
+current compiler baseline. Four monitor-specific fixtures are now certified:
 HTTP listener open/close, HTTP request parsing/routing on fixed raw HTTP
-strings, and DB persistence across close/reopen on a fixed SQLite file
-database. The next implementation slice is HTTP response writing or client
-accept (once a narrow upstream gate covers the exact runtime symbols);
-broaden only after each new slice is reproducible from a clean checkout.
+strings, one deterministic in-process HTTP response loopback on
+`127.0.0.1`, and DB persistence across close/reopen on a fixed SQLite file
+database. The next implementation slice is HTTP response parsing or a small
+persistent request-response loop (once a narrow upstream gate covers the
+exact runtime symbols); broaden only after each new slice is reproducible
+from a clean checkout.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

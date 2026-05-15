@@ -68,11 +68,30 @@
   applies only to `server/src/db_persistence.vais`; other DB symbols and any
   WS or expanded HTTP runtime symbols remain blocked across `server/src` and
   `playground`.
+- Added `server/src/http_response.vais` and
+  `scripts/check-http-response.sh` to certify the monitor-specific HTTP
+  response loopback slice. The fixture completes one deterministic in-process
+  HTTP response roundtrip on `127.0.0.1` from the small deterministic high-port
+  range `39181..39199`: it opens a localhost listener, connects a client to
+  `127.0.0.1`, accepts the connection, sends one fixed monitor HTTP response
+  from the accepted server fd, receives it on the client fd (possibly across
+  multiple recv calls), byte-verifies the exact response bytes through the
+  built-in `load_byte` against the expected literal, and closes every opened
+  fd on every success and error path. The fixture exercises only
+  `__tcp_listen`, `__tcp_connect`, `__tcp_accept`, `__tcp_send`, `__tcp_recv`,
+  `__tcp_close`, `__strlen`, `__malloc`, and `__free` through their explicit
+  C ABI (Vais string literals cross the boundary through `as i64` casts) and
+  does not start a long-running server.
+- Narrowed `scripts/check-runtime-boundary.sh` so the HTTP response symbol
+  allowlist applies only to `server/src/http_response.vais`; other `__tcp_*`,
+  HTTP, DB, and WS runtime symbols remain blocked across `server/src` and
+  `playground`.
 
 ## Next
 
-1. Add a fixture for HTTP response writing or client accept once a named
-   upstream gate covers the exact runtime symbols.
+1. Add a fixture for HTTP response parsing or a small persistent
+   request-response loop once a named upstream gate covers the exact runtime
+   symbols.
 2. Broaden DB persistence (query helpers, multiple rows, schema migration)
    only after a new monitor-specific fixture certifies the additional
    `__sqlite_*` surface required.

@@ -17,6 +17,7 @@ from the official Vais docs without relying on hidden project memory.
 - Adapter readiness gate: `scripts/check-adapter-readiness.sh`
 - HTTP listener lifecycle gate: `scripts/check-http-adapter.sh`
 - HTTP request parsing/routing gate: `scripts/check-http-request.sh`
+- HTTP response loopback gate: `scripts/check-http-response.sh`
 - DB persistence gate: `scripts/check-db-persistence.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
@@ -45,7 +46,7 @@ Do not add placeholder runtime calls that only fail at link time. Add a
 monitor-specific runtime fixture and narrow `scripts/check-runtime-boundary.sh`
 before claiming adapter completion.
 
-Current HTTP adapter certification is limited to two narrow fixtures:
+Current HTTP adapter certification is limited to three narrow fixtures:
 
 - Listener open/close through `__tcp_listen` and `__tcp_close` in
   `server/src/http_adapter.vais`.
@@ -54,6 +55,15 @@ Current HTTP adapter certification is limited to two narrow fixtures:
   `server/src/http_request.vais`. The fixture uses the runtime parser's
   explicit C ABI: a 64-byte output buffer is allocated, the parser writes
   through an out-pointer, and fields are read via the built-in `load_i64`.
+- One deterministic in-process HTTP response loopback through `__tcp_listen`,
+  `__tcp_connect`, `__tcp_accept`, `__tcp_send`, `__tcp_recv`, `__tcp_close`,
+  `__strlen`, `__malloc`, and `__free` in `server/src/http_response.vais`.
+  The fixture opens a localhost listener on a high port from a small
+  deterministic range, connects a client to `127.0.0.1`, accepts the
+  connection, sends one fixed monitor HTTP response from the accepted server
+  fd, receives it on the client fd (possibly across multiple recv calls),
+  byte-verifies the exact response bytes through the built-in `load_byte`,
+  and closes every opened fd on every success and error path.
 
 Current DB adapter certification is limited to one narrow fixture:
 
@@ -65,6 +75,6 @@ Current DB adapter certification is limited to one narrow fixture:
   `server/src/db_persistence.vais`. Persistence is observed through integer
   columns only.
 
-This is not API response writing, accepting client connections, multi-row
-text reads, transactions, schema migration, query helpers, or production
-server completion.
+This is not response parsing, a long-running server, multi-row text reads,
+transactions, schema migration, query helpers, or production server
+completion.

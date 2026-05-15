@@ -23,6 +23,14 @@ The rewrite starts with the smallest evidence-backed slice:
   runtime parser's explicit C ABI: a 64-byte `VaisRequest` output buffer is
   allocated through `__malloc`, the parser writes through an out-pointer, and
   fields are read via the built-in `load_i64`.
+- `scripts/check-http-response.sh` certifies only one deterministic
+  in-process HTTP response roundtrip on `127.0.0.1` (no long-running server).
+  The fixture opens a localhost listener on a high port from the small
+  deterministic range `39181..39199`, connects a client, accepts the
+  connection, sends one fixed monitor HTTP response, receives it back
+  (possibly across multiple recv calls), byte-verifies the bytes through the
+  built-in `load_byte`, and closes every opened fd on every success and
+  error path.
 - `scripts/check-db-persistence.sh` certifies only DB persistence against a
   fixed file SQLite database. The fixture opens the database, creates a
   `monitor_tasks` table, inserts one row, closes the connection, reopens the

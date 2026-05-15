@@ -13,6 +13,9 @@ slice has both IR and native smoke gates.
   and `scripts/check-http-adapter.sh`
 - HTTP request parsing/routing through `server/src/http_request.vais`
   and `scripts/check-http-request.sh`
+- HTTP response loopback (listen / connect / accept / send / recv /
+  byte-verify / close) through `server/src/http_response.vais` and
+  `scripts/check-http-response.sh`
 - DB persistence (open / drop / create / insert / close / reopen / select /
   close) through `server/src/db_persistence.vais` and
   `scripts/check-db-persistence.sh`
@@ -58,6 +61,36 @@ declared with raw `i64` pointer arguments and Vais string literals are passed
 to `__str_eq` through an explicit `as i64` boundary. This avoids passing Vais
 fat strings into a C function that expects two pointer arguments.
 
+`server/src/http_response.vais` may call only:
+
+- `__tcp_listen`
+- `__tcp_connect`
+- `__tcp_accept`
+- `__tcp_send`
+- `__tcp_recv`
+- `__tcp_close`
+- `__strlen`
+- `__malloc`
+- `__free`
+
+These certify that the monitor app can complete one deterministic in-process
+HTTP response roundtrip on `127.0.0.1`: open a localhost listener on a high
+port from the small deterministic range `39181..39199`, connect a client to
+`127.0.0.1`, accept the connection, send one fixed monitor HTTP response from
+the accepted server fd, receive it on the client fd (possibly across multiple
+recv calls), byte-verify the exact response bytes through the built-in
+`load_byte`, and close every opened fd on every success and error path. The
+fixture does not start a long-running server, does not parse the response, and
+does not write or read any DB state. The received buffer is never compared
+through `__str_eq` because it is not null-terminated; comparison runs byte by
+byte against the expected response literal.
+
+The exact monitor response bytes verified by the fixture are:
+
+```
+HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{"ok":true}
+```
+
 `server/src/db_persistence.vais` may call only:
 
 - `__sqlite_open`
@@ -91,9 +124,14 @@ Do not call these runtime families from the reference app source until this
 repository adds another narrowed fixture for the exact symbols being used:
 
 - `server_listen*`
-- other `__tcp_*` symbols (only `__tcp_listen`/`__tcp_close` are certified)
+- other `__tcp_*` symbols beyond the per-fixture allowlists (only
+  `__tcp_listen`/`__tcp_close` are certified in `http_adapter.vais`, and only
+  `__tcp_listen`/`__tcp_connect`/`__tcp_accept`/`__tcp_send`/`__tcp_recv`/
+  `__tcp_close` are certified in `http_response.vais`)
 - other HTTP runtime symbols (only `__strlen`, `__find_header_end`,
-  `__parse_request`, `__str_eq`, `__malloc`, and `__free` are certified)
+  `__parse_request`, `__str_eq`, `__malloc`, and `__free` are certified in
+  `http_request.vais`; only `__strlen`, `__malloc`, and `__free` are
+  certified in `http_response.vais`)
 - other `__sqlite_*` symbols (only `__sqlite_open`, `__sqlite_close`,
   `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
   `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,

@@ -1,0 +1,158 @@
+# Monitor HTTP response loopback fixture.
+# This file certifies the monitor-specific HTTP response writing slice through a
+# deterministic in-process loopback: open a localhost listener on a high port
+# from a small deterministic range, connect a client to 127.0.0.1, accept the
+# connection, send one fixed monitor HTTP response from the accepted server fd,
+# receive it on the client fd (possibly across multiple recv calls), byte-verify
+# the exact response bytes, and close every opened fd on success and error
+# paths. It does not start a long-running server.
+#
+# Runtime symbols cross the C boundary through their raw pointer ABI: host/data
+# /buffer arguments are declared i64 and Vais string literals are passed with an
+# explicit `as i64` cast. The received bytes are compared byte-by-byte against
+# the expected response literal through the built-in `load_byte`; the buffer is
+# never compared through the runtime string-equality helper because recv does
+# not null-terminate it.
+
+impl fn __tcp_listen(port: i64) -> i64
+impl fn __tcp_connect(host: i64, port: i64) -> i64
+impl fn __tcp_accept(listener: i64) -> i64
+impl fn __tcp_send(fd: i64, data: i64, len: i64) -> i64
+impl fn __tcp_recv(fd: i64, buffer: i64, len: i64) -> i64
+impl fn __tcp_close(fd: i64) -> i64
+impl fn __strlen(s: i64) -> i64
+impl fn __malloc(size: i64) -> i64
+impl fn __free(ptr: i64) -> i64
+
+fn port_range_start() -> i64 { 39181 }
+fn port_range_end_exclusive() -> i64 { 39200 }
+fn buffer_size() -> i64 { 512 }
+
+fn loopback_host() -> i64 { "127.0.0.1" as i64 }
+
+fn expected_response() -> i64 {
+    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}" as i64
+}
+
+fn close_fd(fd: i64) -> i64 {
+    I fd >= 0 {
+        __tcp_close(fd)
+    }
+    0
+}
+
+# Receive the full expected payload on the client fd into buf. Returns the
+# number of bytes received on success, or -1 on error or short close.
+fn recv_all(fd: i64, buf: i64, expected_len: i64) -> i64 {
+    received := mut 0
+    LW received < expected_len {
+        remaining := expected_len - received
+        n := __tcp_recv(fd, buf + received, remaining)
+        I n <= 0 {
+            return -1
+        }
+        received = received + n
+    }
+    received
+}
+
+# Byte-by-byte compare buf against expected for expected_len bytes. Returns 1
+# when every byte matches, 0 otherwise. Does not depend on null termination.
+fn buffer_matches(buf: i64, expected: i64, expected_len: i64) -> i64 {
+    i := mut 0
+    LW i < expected_len {
+        I load_byte(buf + i) != load_byte(expected + i) {
+            return 0
+        }
+        i = i + 1
+    }
+    1
+}
+
+# Perform one full loopback roundtrip on the given port. Returns 0 on success
+# and a non-zero error code otherwise. Every fd opened by this function is
+# closed before returning on every path.
+fn run_roundtrip(port: i64, buf: i64) -> i64 {
+    response_ptr := expected_response()
+    response_len := __strlen(response_ptr)
+    I response_len <= 0 {
+        return 21
+    }
+    I response_len > buffer_size() {
+        return 22
+    }
+
+    listener := __tcp_listen(port)
+    I listener < 0 {
+        return 1
+    }
+
+    client := __tcp_connect(loopback_host(), port)
+    I client < 0 {
+        close_fd(listener)
+        return 2
+    }
+
+    server := __tcp_accept(listener)
+    I server < 0 {
+        close_fd(client)
+        close_fd(listener)
+        return 3
+    }
+
+    sent := __tcp_send(server, response_ptr, response_len)
+    I sent != response_len {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 4
+    }
+
+    received := recv_all(client, buf, response_len)
+    I received != response_len {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 5
+    }
+
+    I buffer_matches(buf, response_ptr, response_len) != 1 {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 6
+    }
+
+    close_fd(server)
+    close_fd(client)
+    close_fd(listener)
+    0
+}
+
+# Try the deterministic port range and return success on the first port that
+# completes a full roundtrip. Returns 0 on success or a non-zero error code.
+fn try_port_range(buf: i64) -> i64 {
+    last_err := mut 30
+    port := mut port_range_start()
+    LW port < port_range_end_exclusive() {
+        rc := run_roundtrip(port, buf)
+        I rc == 0 {
+            return 0
+        }
+        last_err = rc
+        port = port + 1
+    }
+    last_err
+}
+
+fn main() -> i64 {
+    buf := __malloc(buffer_size())
+    I buf == 0 {
+        return 10
+    }
+
+    rc := try_port_range(buf)
+
+    __free(buf)
+    rc
+}

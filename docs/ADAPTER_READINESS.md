@@ -15,7 +15,7 @@ Current public evidence from the sibling Vais checkout:
 - DB/server/web runtime main gate: promoted by compiler PR #53
 
 This means HTTP/DB adapter work may now start, but it does not make monitor
-complete by itself. Two monitor-specific HTTP adapter fixtures and one
+complete by itself. Three monitor-specific HTTP adapter fixtures and one
 monitor-specific DB persistence fixture are now allowed, each with its own
 narrowed symbol set:
 
@@ -27,6 +27,18 @@ narrowed symbol set:
   parser fills it through an out-pointer, fields are read via the built-in
   `load_i64`, and the buffer is released through `__free`. Vais string
   literals cross the C boundary through explicit `as i64` casts.
+- `server/src/http_response.vais` allows only `__tcp_listen`,
+  `__tcp_connect`, `__tcp_accept`, `__tcp_send`, `__tcp_recv`, `__tcp_close`,
+  `__strlen`, `__malloc`, and `__free`. The fixture completes one
+  deterministic in-process HTTP response roundtrip on `127.0.0.1` from the
+  small deterministic port range `39181..39199`: it opens a localhost
+  listener, connects a client to `127.0.0.1`, accepts the connection, sends
+  one fixed monitor HTTP response from the accepted server fd, receives it on
+  the client fd (possibly across multiple recv calls), byte-verifies the
+  exact response bytes through the built-in `load_byte`, and closes every
+  opened fd on every success and error path. Runtime symbols are declared
+  with raw `i64` pointer arguments and Vais string literals cross the C
+  boundary through explicit `as i64` casts.
 - `server/src/db_persistence.vais` allows only `__sqlite_open`,
   `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
   `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
@@ -70,10 +82,11 @@ An adapter task may begin only when all of these are true:
 5. A monitor-specific runtime fixture is added before any completion claim.
 
 The current fixtures satisfy this rule only for the narrow symbol sets named
-above. Broader HTTP runtime symbols (response writing, accepting connections),
-broader `__sqlite_*` symbols (query helpers, text columns, transactions,
-schema migration), or WebSocket symbols each need a new fixture and a matching
-boundary update before they may enter `server/src` or `playground`.
+above. Broader HTTP runtime symbols (response parsing, persistent server
+loops, request-response handlers), broader `__sqlite_*` symbols (query
+helpers, text columns, transactions, schema migration), or WebSocket symbols
+each need a new fixture and a matching boundary update before they may enter
+`server/src` or `playground`.
 
 If the upstream wording changes but the intended certification is equivalent,
 update this script and document the exact public gate name in the same commit.
