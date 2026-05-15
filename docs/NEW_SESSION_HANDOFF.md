@@ -8,6 +8,12 @@ git status --short --branch
 scripts/check-reference-gates.sh
 ```
 
+After committing changes, run:
+
+```bash
+scripts/check-clean-checkout.sh
+```
+
 The server slice is intentionally IR-only. It validates current Vais language
 surface without pretending that DB/server/ws runtime symbols are ready for this
 reference app.
@@ -22,6 +28,7 @@ compiler repository:
 - `/Users/sswoo/study/projects/vais/compiler/docs/ai/LLM_LANGUAGE_CARD.md`
 - `/Users/sswoo/study/projects/vais/compiler/docs/LANGUAGE_SPEC.md`
 - `/Users/sswoo/study/projects/vais/compiler/PUBLIC_STATUS.md`
+- `docs/GOAL.md`
 
 If compiler behavior and docs disagree, stop and fix the compiler or docs before
 adding fallback syntax here.

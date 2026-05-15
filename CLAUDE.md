@@ -22,6 +22,9 @@ unless explicitly asked. The old tree is preserved at
   changes.
 - `web/` is a static Vite shell for the same seed state.
 - `scripts/check-reference-gates.sh` is the root verification command.
+- `scripts/check-clean-checkout.sh` verifies the committed tree from a temporary
+  git worktree.
+- `docs/GOAL.md` defines the acceptance rule for broadening the reference app.
 
 Do not call unfinished `server_listen*`, `db_*`, or `ws_*` runtime symbols. Do
 not commit `.ll`, `.db`, `node_modules`, or `dist` artifacts.

@@ -12,6 +12,8 @@ The rewrite starts with the smallest evidence-backed slice:
 - The playground sample is synchronized from the same domain source.
 - The web shell builds separately and does not claim server integration.
 - Docs name evidence boundaries instead of product-complete status.
+- `scripts/check-clean-checkout.sh` verifies committed changes from a temporary
+  git worktree.
 
 Recover the old tree only for comparison:
 

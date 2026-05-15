@@ -11,10 +11,12 @@
   canonical i32-tag IR layout.
 - Added `playground/monitor.vais` and a sync/check path so the playground sample
   cannot silently drift from the server domain source.
+- Added `scripts/check-clean-checkout.sh` and `docs/GOAL.md` so committed work
+  has a clean-checkout acceptance path.
 
 ## Next
 
-1. Add CI or automation that runs `scripts/check-reference-gates.sh` from a
+1. Add CI or automation that runs `scripts/check-clean-checkout.sh` from a
    clean checkout when this repo has a remote workflow surface.
 2. Add an HTTP adapter only after the server runtime symbols are promoted into a
    reproducible main-branch gate.
