@@ -1,8 +1,8 @@
 # Runtime Boundary
 
 The current monitor reference app intentionally stops at a pure server-domain
-slice, five narrow HTTP runtime fixtures, one narrow DB persistence fixture,
-and a static web shell. The domain slice has both IR and native smoke gates.
+slice, five narrow HTTP runtime fixtures, two narrow DB fixtures, and a static
+web shell. The domain slice has both IR and native smoke gates.
 
 ## Allowed Now
 
@@ -26,6 +26,12 @@ and a static web shell. The domain slice has both IR and native smoke gates.
 - DB persistence (open / drop / create / insert / close / reopen / select /
   close) through `server/src/db_persistence.vais` and
   `scripts/check-db-persistence.sh`
+- DB multi-row query + schema migration + column metadata (open / drop /
+  create / three inserts via one prepared statement reused with
+  `__sqlite_reset` / ALTER TABLE migration / parameterized UPDATE / SELECT
+  with column count + names + types + values across three rows + DONE /
+  close) through `server/src/db_query_rows.vais` and
+  `scripts/check-db-query-rows.sh`
 - Playground source synchronization through `playground/monitor.vais`
 - Static web build through `web/`
 
@@ -214,6 +220,63 @@ symbol. Runtime symbols are declared with raw `i64` pointer arguments and Vais
 string literals cross the C boundary through explicit `as i64` casts so the
 runtime never receives a Vais fat string in a pointer slot.
 
+`server/src/db_query_rows.vais` may call only:
+
+- `__sqlite_open`
+- `__sqlite_close`
+- `__sqlite_exec`
+- `__sqlite_prepare`
+- `__sqlite_bind_int`
+- `__sqlite_bind_text`
+- `__sqlite_step`
+- `__sqlite_column_int`
+- `__sqlite_column_type`
+- `__sqlite_column_count`
+- `__sqlite_column_name`
+- `__sqlite_finalize`
+- `__sqlite_reset`
+- `__sqlite_last_insert_rowid`
+- `__sqlite_changes`
+
+These certify that the monitor app can drive a bounded multi-row SQLite
+query, a schema migration, and column metadata reads through the public
+SQLite runtime. The fixture pins the database file to
+`/tmp/vais-monitor-db-query-rows.sqlite` (the script removes that file plus
+its `-wal`/`-shm` siblings before and after each run), drops/creates the
+`monitor_tasks` table, then inserts exactly three rows by reusing one
+prepared `INSERT INTO monitor_tasks (title, priority, title_len)
+VALUES (?, ?, ?)` statement with `__sqlite_reset` between executions:
+row 1 is `(title="ship monitor", priority=4, title_len=12)`, row 2 is
+`(title="wire adapters", priority=8, title_len=13)`, row 3 is
+`(title="prove gates", priority=9, title_len=14)`. After each insert step
+the fixture verifies that `__sqlite_changes` is `1`; after the third
+insert it verifies that `__sqlite_last_insert_rowid` is `3`. The fixture
+then applies an `ALTER TABLE monitor_tasks ADD COLUMN archived INTEGER
+NOT NULL DEFAULT 0` migration through `__sqlite_exec`, runs a prepared
+`UPDATE monitor_tasks SET archived = 1 WHERE priority >= ?` with the
+single bound integer threshold `8`, steps to `SQLITE_DONE`, and verifies
+that `__sqlite_changes` is `2`. Finally it walks a prepared
+`SELECT id, priority, title_len, archived FROM monitor_tasks ORDER BY
+id` statement: it asserts `__sqlite_column_count` is `4`, compares the
+four `__sqlite_column_name` C strings byte-by-byte against the expected
+literals `id`, `priority`, `title_len`, and `archived` through the
+built-in `load_byte` (including the trailing NUL byte) without calling
+the Vais string-equality helper, asserts that `__sqlite_column_type`
+returns `SQLITE_INTEGER` (`1`) for every selected column on every row,
+asserts that the three result rows are exactly
+`(id=1, priority=4, title_len=12, archived=0)`,
+`(id=2, priority=8, title_len=13, archived=1)`, and
+`(id=3, priority=9, title_len=14, archived=1)`, and verifies that the
+fourth `__sqlite_step` call returns `SQLITE_DONE`. Every prepared
+statement is finalized and the connection is closed on every success and
+error path. The fixture does not call `__sqlite_column_text` (the
+SQLite-runtime text reader returns malloc-copied bytes and this app has
+no SQLite-specific free wrapper yet), does not call `__str_eq` or
+`__free` (the script links only the SQLite runtime translation unit),
+does not use a callback, and does not start a server. Runtime symbols
+are declared with raw `i64` pointer arguments and Vais string literals
+cross the C boundary through explicit `as i64` casts.
+
 ## Still Blocked
 
 Do not call these runtime families from the reference app source until this
@@ -239,7 +302,9 @@ repository adds another narrowed fixture for the exact symbols being used:
   `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
   `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
   `__sqlite_finalize`, `__sqlite_last_insert_rowid`, and `__sqlite_changes`
-  are certified)
+  are certified in `db_persistence.vais`; only those eleven plus
+  `__sqlite_column_type`, `__sqlite_column_count`, `__sqlite_column_name`,
+  and `__sqlite_reset` are certified in `db_query_rows.vais`)
 - `db_*`
 - `ws_*`
 

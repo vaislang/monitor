@@ -22,6 +22,8 @@ from the official Vais docs without relying on hidden project memory.
 - HTTP persistent request-response loop gate:
   `scripts/check-http-request-response-loop.sh`
 - DB persistence gate: `scripts/check-db-persistence.sh`
+- DB multi-row query + schema migration + column metadata gate:
+  `scripts/check-db-query-rows.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
 
@@ -92,7 +94,7 @@ Current HTTP adapter certification is limited to five narrow fixtures:
   parser-owned allocation, and closes every opened fd on every success
   and error path.
 
-Current DB adapter certification is limited to one narrow fixture:
+Current DB adapter certification is limited to two narrow fixtures:
 
 - Persistence (open / drop / create / insert / close / reopen / select /
   close) through `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
@@ -101,6 +103,22 @@ Current DB adapter certification is limited to one narrow fixture:
   `__sqlite_last_insert_rowid`, and `__sqlite_changes` in
   `server/src/db_persistence.vais`. Persistence is observed through integer
   columns only.
+- Multi-row query + schema migration + column metadata (open / drop /
+  create / three inserts via one prepared statement reused with
+  `__sqlite_reset` / `ALTER TABLE` migration / parameterized `UPDATE`
+  whose `__sqlite_changes` is verified / `SELECT` with
+  `__sqlite_column_count`, `__sqlite_column_name` byte-by-byte through
+  `load_byte`, `__sqlite_column_type` `SQLITE_INTEGER`, and exact
+  integer cell values across three rows + `SQLITE_DONE` / close) through
+  `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`,
+  `__sqlite_bind_int`, `__sqlite_bind_text`, `__sqlite_step`,
+  `__sqlite_column_int`, `__sqlite_column_type`, `__sqlite_column_count`,
+  `__sqlite_column_name`, `__sqlite_finalize`, `__sqlite_reset`,
+  `__sqlite_last_insert_rowid`, and `__sqlite_changes` in
+  `server/src/db_query_rows.vais`. Multi-row reads are observed through
+  integer columns only; `__sqlite_column_text` is not part of the
+  allowlist.
 
-This is not a long-running server, multi-row text reads, transactions, schema
-migration, query helpers, URL parsing, or production server completion.
+This is not a long-running server, multi-row text reads, transactions,
+query helpers beyond the certified column-metadata surface, URL parsing,
+or production server completion.

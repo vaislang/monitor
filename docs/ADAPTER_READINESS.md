@@ -15,9 +15,9 @@ Current public evidence from the sibling Vais checkout:
 - DB/server/web runtime main gate: promoted by compiler PR #53
 
 This means HTTP/DB adapter work may now start, but it does not make monitor
-complete by itself. Five monitor-specific HTTP adapter fixtures and one
-monitor-specific DB persistence fixture are now allowed, each with its own
-narrowed symbol set:
+complete by itself. Five monitor-specific HTTP adapter fixtures and two
+monitor-specific DB fixtures are now allowed, each with its own narrowed
+symbol set:
 
 - `server/src/http_adapter.vais` allows only `__tcp_listen`/`__tcp_close`.
 - `server/src/http_request.vais` allows only `__strlen`,
@@ -93,6 +93,32 @@ narrowed symbol set:
   arguments are passed through the explicit C ABI (`char*` declared as `i64`,
   Vais string literals cast with `as i64`). Persistence is observed through
   integer columns only — `__sqlite_column_text` is not part of the allowlist.
+- `server/src/db_query_rows.vais` allows only `__sqlite_open`,
+  `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
+  `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
+  `__sqlite_column_type`, `__sqlite_column_count`, `__sqlite_column_name`,
+  `__sqlite_finalize`, `__sqlite_reset`, `__sqlite_last_insert_rowid`, and
+  `__sqlite_changes`. The fixture pins the database file to
+  `/tmp/vais-monitor-db-query-rows.sqlite`, drops/creates `monitor_tasks`,
+  inserts exactly three rows by reusing one prepared INSERT statement with
+  `__sqlite_reset` (verifying `__sqlite_changes` is `1` after each insert
+  and `__sqlite_last_insert_rowid` is `3` after the third insert), applies
+  `ALTER TABLE monitor_tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`
+  through `__sqlite_exec`, runs a prepared `UPDATE monitor_tasks SET
+  archived = 1 WHERE priority >= ?` with bound threshold `8` and verifies
+  `__sqlite_changes` is `2`, then walks a prepared `SELECT id, priority,
+  title_len, archived FROM monitor_tasks ORDER BY id`. It asserts
+  `__sqlite_column_count` is `4`, compares the four `__sqlite_column_name`
+  C strings byte-by-byte against `id`, `priority`, `title_len`, `archived`
+  including the trailing NUL through the built-in `load_byte` (without
+  calling `__str_eq`), asserts `__sqlite_column_type` returns
+  `SQLITE_INTEGER` for every selected column on every row, asserts every
+  selected integer cell, and verifies that the fourth step returns
+  `SQLITE_DONE`. The fixture does not call `__sqlite_column_text`, does
+  not call `__str_eq` or `__free` (the check script links only the
+  SQLite runtime translation unit), does not use a callback, and does not
+  start a server. Path/SQL/text arguments cross the C boundary through
+  explicit `as i64` casts.
 
 ## Gate
 
@@ -128,10 +154,10 @@ An adapter task may begin only when all of these are true:
 The current fixtures satisfy this rule only for the narrow symbol sets named
 above. Broader HTTP runtime behavior (persistent server loops, request-response
 handler wiring beyond the bounded fixture, URL parsing, additional response
-parser fields), broader `__sqlite_*` symbols (query helpers, text columns,
-transactions, schema migration), or WebSocket symbols each need a new fixture
-and a matching boundary update before they may enter `server/src` or
-`playground`.
+parser fields), broader `__sqlite_*` symbols (text columns, transactions,
+helpers not yet covered by the multi-row query fixture), or WebSocket symbols
+each need a new fixture and a matching boundary update before they may enter
+`server/src` or `playground`.
 
 If the upstream wording changes but the intended certification is equivalent,
 update this script and document the exact public gate name in the same commit.

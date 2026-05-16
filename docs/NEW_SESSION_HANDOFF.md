@@ -21,7 +21,7 @@ gh run list --repo vaislang/monitor --limit 5
 ```
 
 The main server slice is intentionally domain-only. It validates current Vais
-language surface through IR and native smoke gates. Six separate fixtures
+language surface through IR and native smoke gates. Seven separate fixtures
 certify narrow HTTP and DB runtime slices:
 
 - `server/src/http_adapter.vais` certifies only HTTP listener open/close
@@ -84,6 +84,33 @@ certify narrow HTTP and DB runtime slices:
   reopens the file, and verifies the persisted row through `SELECT
   COUNT(*)/SUM(priority)/SUM(title_len)`. Path/SQL/text arguments cross the
   C boundary through explicit `as i64` casts.
+- `server/src/db_query_rows.vais` certifies only one bounded multi-row
+  SQLite query + schema migration + column metadata slice on a fixed file
+  database (`__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
+  `__sqlite_prepare`, `__sqlite_bind_int`, `__sqlite_bind_text`,
+  `__sqlite_step`, `__sqlite_column_int`, `__sqlite_column_type`,
+  `__sqlite_column_count`, `__sqlite_column_name`, `__sqlite_finalize`,
+  `__sqlite_reset`, `__sqlite_last_insert_rowid`, `__sqlite_changes`).
+  The fixture pins the database to
+  `/tmp/vais-monitor-db-query-rows.sqlite`, drops/creates
+  `monitor_tasks`, inserts exactly three rows by reusing one prepared
+  INSERT statement with `__sqlite_reset` (verifying `__sqlite_changes`
+  is `1` after each insert and `__sqlite_last_insert_rowid` is `3`
+  after the third), applies `ALTER TABLE monitor_tasks ADD COLUMN
+  archived INTEGER NOT NULL DEFAULT 0` through `__sqlite_exec`, runs a
+  prepared `UPDATE monitor_tasks SET archived = 1 WHERE priority >= ?`
+  with bound threshold `8` and verifies `__sqlite_changes` is `2`, then
+  walks `SELECT id, priority, title_len, archived FROM monitor_tasks
+  ORDER BY id`. It asserts `__sqlite_column_count` is `4`, compares the
+  four `__sqlite_column_name` C strings byte-by-byte (including the
+  trailing NUL) against `id`, `priority`, `title_len`, `archived`
+  through the built-in `load_byte`, asserts `__sqlite_column_type` is
+  `SQLITE_INTEGER` for every selected column on every row, asserts every
+  selected integer cell, and verifies that the fourth step returns
+  `SQLITE_DONE`. The fixture does not call `__sqlite_column_text`,
+  `__str_eq`, or `__free`; it does not use a callback and does not start
+  a server. Path/SQL/text arguments cross the C boundary through
+  explicit `as i64` casts.
 
 `playground/monitor.vais` is a synchronized copy of `server/src/main.vais`. If
 the server source changes, run `scripts/sync-playground-example.sh` before the
@@ -136,7 +163,16 @@ loop fixture allows only `__tcp_listen`, `__tcp_connect`, `__tcp_accept`,
 bounded in-process HTTP request-response cycle on `127.0.0.1` from the
 small deterministic high-port range `39201..39219`, and wires
 `__parse_request`, `__call_handler`, and `__parse_response` together
-inside one accept/send cycle. The next adapter task is to broaden DB
-persistence (query helpers, multiple rows, schema migration) once a new
-monitor-specific fixture certifies the additional `__sqlite_*` surface
-required; web data wiring is a later slice.
+inside one accept/send cycle. The DB multi-row query fixture allows only
+`__sqlite_open`, `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`,
+`__sqlite_bind_int`, `__sqlite_bind_text`, `__sqlite_step`,
+`__sqlite_column_int`, `__sqlite_column_type`, `__sqlite_column_count`,
+`__sqlite_column_name`, `__sqlite_finalize`, `__sqlite_reset`,
+`__sqlite_last_insert_rowid`, and `__sqlite_changes`, and is observed
+through integer columns only; column names are compared byte-by-byte
+through the built-in `load_byte` against expected C-string literals
+(including the trailing NUL) without invoking the Vais string-equality
+helper. The next adapter task is to broaden DB persistence further
+(text column reads, transactions) once a new monitor-specific fixture
+certifies the additional `__sqlite_*` surface required; web data wiring
+is a later slice.

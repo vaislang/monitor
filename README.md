@@ -109,6 +109,30 @@ from a clean vertical slice using the current official Vais docs.
   from a small deterministic high-port range.
 - `scripts/check-db-persistence.sh`: emits IR, links the SQLite runtime fixture
   (`std/sqlite_runtime.c` plus `-lsqlite3`), and runs the persistence smoke.
+- `server/src/db_query_rows.vais`: monitor-specific DB multi-row query +
+  schema migration + column metadata fixture. It certifies `__sqlite_open`,
+  `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
+  `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
+  `__sqlite_column_type`, `__sqlite_column_count`, `__sqlite_column_name`,
+  `__sqlite_finalize`, `__sqlite_reset`, `__sqlite_last_insert_rowid`, and
+  `__sqlite_changes` against the public SQLite runtime. The fixture pins the
+  database file to `/tmp/vais-monitor-db-query-rows.sqlite`, drops/creates
+  `monitor_tasks`, inserts exactly three rows by reusing one prepared
+  INSERT statement with `__sqlite_reset` (verifying `__sqlite_changes`
+  after each insert and `__sqlite_last_insert_rowid` after the third
+  insert), applies `ALTER TABLE monitor_tasks ADD COLUMN archived
+  INTEGER NOT NULL DEFAULT 0` through `__sqlite_exec`, runs a
+  parameterized `UPDATE` with a bound integer threshold and verifies
+  `__sqlite_changes` is `2`, then walks `SELECT id, priority,
+  title_len, archived FROM monitor_tasks ORDER BY id`. It asserts the
+  column count, the column names (byte-by-byte through the built-in
+  `load_byte`, including the trailing NUL), `SQLITE_INTEGER` for every
+  selected column type on every row, the exact integer cell values
+  across three rows, and that the fourth step returns `SQLITE_DONE`.
+  Multi-row reads are observed through integer columns only.
+- `scripts/check-db-query-rows.sh`: emits IR, links the SQLite runtime
+  fixture (`std/sqlite_runtime.c` plus `-lsqlite3`), and runs the
+  multi-row query + schema migration + column metadata smoke.
 - `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
   hosted gate execution.
 
@@ -152,17 +176,19 @@ Read in this order before writing any Vais:
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
 `scripts/check-adapter-readiness.sh --require-promoted` passes against the
-current compiler baseline. Six monitor-specific fixtures are now certified:
+current compiler baseline. Seven monitor-specific fixtures are now certified:
 HTTP listener open/close, HTTP request parsing/routing on fixed raw HTTP
 strings, one deterministic in-process HTTP response loopback on
 `127.0.0.1`, HTTP response parsing on fixed raw HTTP response strings, one
 bounded in-process HTTP request-response cycle that wires `__parse_request`,
-`__call_handler`, and `__parse_response` together on `127.0.0.1`, and
-DB persistence across close/reopen on a fixed SQLite file database. The
-next implementation slice broadens DB persistence (query helpers, multiple
-rows, schema migration) only after a new monitor-specific fixture certifies
-the additional `__sqlite_*` surface required; broaden only after each new
-slice is reproducible from a clean checkout.
+`__call_handler`, and `__parse_response` together on `127.0.0.1`, DB
+persistence across close/reopen on a fixed SQLite file database, and one
+bounded multi-row SQLite query + schema migration + column metadata slice on
+a fixed SQLite file database. The next implementation slice broadens DB
+persistence further (text column reads, transactions) only after a new
+monitor-specific fixture certifies the additional `__sqlite_*` surface
+required; broaden only after each new slice is reproducible from a clean
+checkout.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

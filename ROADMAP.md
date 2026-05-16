@@ -137,11 +137,45 @@
   `server/src/http_request_response_loop.vais`; other HTTP runtime,
   `__tcp_*`, DB, and WS runtime symbols remain blocked across
   `server/src` and `playground`.
+- Added `server/src/db_query_rows.vais` and
+  `scripts/check-db-query-rows.sh` to certify the monitor-specific
+  multi-row query + schema migration + column metadata slice. The fixture
+  pins the database file to `/tmp/vais-monitor-db-query-rows.sqlite`,
+  drops/creates `monitor_tasks`, inserts exactly three rows by reusing one
+  prepared INSERT statement with `__sqlite_reset` (verifying
+  `__sqlite_changes` is `1` after each insert and
+  `__sqlite_last_insert_rowid` is `3` after the third insert), applies an
+  `ALTER TABLE monitor_tasks ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`
+  migration through `__sqlite_exec`, runs a parameterized
+  `UPDATE monitor_tasks SET archived = 1 WHERE priority >= ?` with bound
+  threshold `8` and verifies `__sqlite_changes` is `2`, and walks a
+  `SELECT id, priority, title_len, archived FROM monitor_tasks ORDER BY id`
+  prepared statement. The fixture verifies `__sqlite_column_count` is `4`,
+  compares the four `__sqlite_column_name` C strings byte-by-byte against
+  `id`, `priority`, `title_len`, `archived` (including the trailing NUL)
+  through the built-in `load_byte`, asserts `__sqlite_column_type` is
+  `SQLITE_INTEGER` for every selected column on every row, asserts every
+  selected integer cell exactly, and verifies that the fourth step returns
+  `SQLITE_DONE`. The fixture exercises only `__sqlite_open`,
+  `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`,
+  `__sqlite_bind_int`, `__sqlite_bind_text`, `__sqlite_step`,
+  `__sqlite_column_int`, `__sqlite_column_type`, `__sqlite_column_count`,
+  `__sqlite_column_name`, `__sqlite_finalize`, `__sqlite_reset`,
+  `__sqlite_last_insert_rowid`, and `__sqlite_changes` through their
+  explicit C ABI (Vais string literals cross the boundary through
+  `as i64` casts). It does not use `__sqlite_column_text`, does not call
+  `__str_eq` or `__free`, does not use callbacks, and does not start a
+  server.
+- Narrowed `scripts/check-runtime-boundary.sh` so the multi-row query
+  + schema migration allowlist applies only to
+  `server/src/db_query_rows.vais`; other `__sqlite_*`, HTTP runtime,
+  `__tcp_*`, and WS runtime symbols remain blocked across `server/src`
+  and `playground`.
 
 ## Next
 
-1. Broaden DB persistence (query helpers, multiple rows, schema migration)
-   only after a new monitor-specific fixture certifies the additional
+1. Broaden DB persistence further (text column reads, transactions) only
+   after a new monitor-specific fixture certifies the additional
    `__sqlite_*` surface required.
 2. Replace the static TypeScript task state with data produced through the Vais
    adapter path.

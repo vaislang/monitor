@@ -64,6 +64,28 @@ The rewrite starts with the smallest evidence-backed slice:
   through integer columns only — text columns are not part of the allowlist.
   Path/SQL/text arguments cross the C boundary through explicit `as i64`
   casts.
+- `scripts/check-db-query-rows.sh` certifies only one bounded multi-row
+  SQLite query + schema migration + column metadata slice against a
+  fixed file SQLite database. The fixture opens the database, drops and
+  creates `monitor_tasks`, inserts exactly three rows by reusing one
+  prepared `INSERT` statement with `__sqlite_reset` between executions
+  (verifying `__sqlite_changes` and `__sqlite_last_insert_rowid` along
+  the way), applies one `ALTER TABLE` migration through
+  `__sqlite_exec`, runs a parameterized `UPDATE` with a bound integer
+  threshold and verifies `__sqlite_changes` is `2`, then walks a
+  prepared `SELECT id, priority, title_len, archived FROM
+  monitor_tasks ORDER BY id` statement. It asserts
+  `__sqlite_column_count` is `4`, compares the four
+  `__sqlite_column_name` C strings byte-by-byte against the expected
+  literals through the built-in `load_byte` (including the trailing
+  NUL), asserts `__sqlite_column_type` is `SQLITE_INTEGER` for every
+  selected column on every row, asserts every selected integer cell,
+  and verifies that the fourth step returns `SQLITE_DONE`. Multi-row
+  reads are observed through integer columns only — text columns are
+  not part of the allowlist, the fixture does not call `__str_eq` or
+  `__free`, and the check script links only the SQLite runtime
+  translation unit. Path/SQL/text arguments cross the C boundary
+  through explicit `as i64` casts.
 - Broader runtime behavior remains out of scope until named fixtures exist.
 
 Recover the old tree only for comparison:
