@@ -19,6 +19,8 @@ from the official Vais docs without relying on hidden project memory.
 - HTTP request parsing/routing gate: `scripts/check-http-request.sh`
 - HTTP response loopback gate: `scripts/check-http-response.sh`
 - HTTP response parsing gate: `scripts/check-http-response-parse.sh`
+- HTTP persistent request-response loop gate:
+  `scripts/check-http-request-response-loop.sh`
 - DB persistence gate: `scripts/check-db-persistence.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
@@ -47,7 +49,7 @@ Do not add placeholder runtime calls that only fail at link time. Add a
 monitor-specific runtime fixture and narrow `scripts/check-runtime-boundary.sh`
 before claiming adapter completion.
 
-Current HTTP adapter certification is limited to four narrow fixtures:
+Current HTTP adapter certification is limited to five narrow fixtures:
 
 - Listener open/close through `__tcp_listen` and `__tcp_close` in
   `server/src/http_adapter.vais`.
@@ -72,6 +74,23 @@ Current HTTP adapter certification is limited to four narrow fixtures:
   `VaisResponse` C out-pointer through `load_i64`, asserts `status`,
   `version`, `status_text`, `body_len`, the exact body bytes, and the
   `Content-Type`/`Content-Length`/`Connection` header name/value pairs.
+- One bounded in-process HTTP request-response cycle through `__tcp_listen`,
+  `__tcp_connect`, `__tcp_accept`, `__tcp_send`, `__tcp_recv`, `__tcp_close`,
+  `__strlen`, `__find_header_end`, `__parse_request`, `__parse_response`,
+  `__call_handler`, `__str_eq`, `__malloc`, and `__free` in
+  `server/src/http_request_response_loop.vais`. The fixture opens a
+  localhost listener on a high port from the small deterministic range
+  `39201..39219`, connects a client to `127.0.0.1`, accepts the
+  connection, receives the fixed monitor HTTP request, calls
+  `__find_header_end` and `__parse_request`, verifies the parsed request,
+  invokes a monitor handler through `__call_handler` with the handler
+  passed as a function pointer (`monitor_handler as i64`), verifies the
+  handler-populated `VaisResponse` fields, sends one fixed monitor HTTP
+  response from the accepted server fd, receives it on the client fd,
+  byte-verifies the bytes through the built-in `load_byte`, calls
+  `__parse_response`, verifies the parsed response, frees every
+  parser-owned allocation, and closes every opened fd on every success
+  and error path.
 
 Current DB adapter certification is limited to one narrow fixture:
 

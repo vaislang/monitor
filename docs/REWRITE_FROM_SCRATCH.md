@@ -42,6 +42,20 @@ The rewrite starts with the smallest evidence-backed slice:
   `Connection` header name/value pairs. The body slice aliases the raw
   response buffer and is byte-copied into a fresh null-terminated buffer
   through `load_byte`/`store_byte` before equality comparison.
+- `scripts/check-http-request-response-loop.sh` certifies only one bounded
+  in-process HTTP request-response cycle on `127.0.0.1` (no long-running
+  server). The fixture opens a localhost listener on a high port from the
+  small deterministic range `39201..39219`, connects a client, accepts
+  the connection, receives the fixed monitor HTTP request, calls
+  `__find_header_end` and `__parse_request`, verifies the parsed request,
+  invokes a monitor handler through `__call_handler` with the handler
+  passed as a function pointer (`monitor_handler as i64`), verifies the
+  handler-populated `VaisResponse` fields, sends one fixed monitor HTTP
+  response, receives it back (possibly across multiple recv calls),
+  byte-verifies the bytes through the built-in `load_byte`, calls
+  `__parse_response`, verifies the parsed response, frees every
+  parser-owned allocation, and closes every opened fd on every success
+  and error path.
 - `scripts/check-db-persistence.sh` certifies only DB persistence against a
   fixed file SQLite database. The fixture opens the database, creates a
   `monitor_tasks` table, inserts one row, closes the connection, reopens the

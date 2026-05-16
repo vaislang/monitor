@@ -47,8 +47,8 @@ from a clean vertical slice using the current official Vais docs.
 - `playground/monitor.vais`: playground copy of the same domain source. Keep it
   synchronized with `scripts/sync-playground-example.sh`.
 - `web/`: static Vite shell that displays the same seed monitor task state.
-- `scripts/check-runtime-boundary.sh`: allows only the named HTTP listener
-  lifecycle symbols and rejects uncertified DB/WS/server calls.
+- `scripts/check-runtime-boundary.sh`: allows only the named per-fixture
+  HTTP/DB runtime symbols and rejects uncertified DB/WS/server calls.
 - `scripts/check-adapter-readiness.sh`: reports whether public DB/server/web
   runtime evidence has been promoted enough to start HTTP/DB adapter work.
 - `scripts/check-http-adapter.sh`: emits IR, links the HTTP runtime fixture, and
@@ -86,6 +86,27 @@ from a clean vertical slice using the current official Vais docs.
 - `scripts/check-http-response-parse.sh`: emits IR, links the HTTP runtime
   fixture, and runs the response parsing smoke against two fixed raw HTTP
   response strings.
+- `server/src/http_request_response_loop.vais`: monitor-specific HTTP
+  persistent request-response loop fixture. It certifies `__tcp_listen`,
+  `__tcp_connect`, `__tcp_accept`, `__tcp_send`, `__tcp_recv`, `__tcp_close`,
+  `__strlen`, `__find_header_end`, `__parse_request`, `__parse_response`,
+  `__call_handler`, `__str_eq`, `__malloc`, and `__free` by completing one
+  bounded in-process HTTP request-response cycle on `127.0.0.1` from the
+  small deterministic high-port range `39201..39219`: it opens a localhost
+  listener, connects a client, accepts the connection, receives the fixed
+  monitor HTTP request, calls `__find_header_end` and `__parse_request`,
+  verifies the parsed request, invokes a monitor handler through
+  `__call_handler` with the handler passed as a function pointer
+  (`monitor_handler as i64`), verifies the handler-populated
+  `VaisResponse` fields, sends one fixed monitor HTTP response from the
+  accepted server fd, receives it on the client fd, byte-verifies the
+  bytes through the built-in `load_byte`, calls `__parse_response`,
+  verifies the parsed response, frees every parser-owned allocation, and
+  closes every opened fd on every success and error path. The fixture
+  does not start a long-running server.
+- `scripts/check-http-request-response-loop.sh`: emits IR, links the HTTP
+  runtime fixture, and runs the request-response loop smoke on `127.0.0.1`
+  from a small deterministic high-port range.
 - `scripts/check-db-persistence.sh`: emits IR, links the SQLite runtime fixture
   (`std/sqlite_runtime.c` plus `-lsqlite3`), and runs the persistence smoke.
 - `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
@@ -131,15 +152,17 @@ Read in this order before writing any Vais:
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
 `scripts/check-adapter-readiness.sh --require-promoted` passes against the
-current compiler baseline. Five monitor-specific fixtures are now certified:
+current compiler baseline. Six monitor-specific fixtures are now certified:
 HTTP listener open/close, HTTP request parsing/routing on fixed raw HTTP
 strings, one deterministic in-process HTTP response loopback on
-`127.0.0.1`, HTTP response parsing on fixed raw HTTP response strings, and
-DB persistence across close/reopen on a fixed SQLite file database. The next
-implementation slice is a small persistent request-response loop (once a
-narrow upstream gate covers the exact runtime symbols required to wire
-`__parse_request`, `__parse_response`, and `__call_handler` together);
-broaden only after each new slice is reproducible from a clean checkout.
+`127.0.0.1`, HTTP response parsing on fixed raw HTTP response strings, one
+bounded in-process HTTP request-response cycle that wires `__parse_request`,
+`__call_handler`, and `__parse_response` together on `127.0.0.1`, and
+DB persistence across close/reopen on a fixed SQLite file database. The
+next implementation slice broadens DB persistence (query helpers, multiple
+rows, schema migration) only after a new monitor-specific fixture certifies
+the additional `__sqlite_*` surface required; broaden only after each new
+slice is reproducible from a clean checkout.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

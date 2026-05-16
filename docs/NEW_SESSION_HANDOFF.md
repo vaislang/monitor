@@ -21,7 +21,7 @@ gh run list --repo vaislang/monitor --limit 5
 ```
 
 The main server slice is intentionally domain-only. It validates current Vais
-language surface through IR and native smoke gates. Five separate fixtures
+language surface through IR and native smoke gates. Six separate fixtures
 certify narrow HTTP and DB runtime slices:
 
 - `server/src/http_adapter.vais` certifies only HTTP listener open/close
@@ -57,6 +57,24 @@ certify narrow HTTP and DB runtime slices:
   `header_items` allocation are released on every success and error path.
   Vais string literals cross the C boundary through explicit `as i64`
   casts.
+- `server/src/http_request_response_loop.vais` certifies only one bounded
+  in-process HTTP request-response cycle on `127.0.0.1` (`__tcp_listen`,
+  `__tcp_connect`, `__tcp_accept`, `__tcp_send`, `__tcp_recv`,
+  `__tcp_close`, `__strlen`, `__find_header_end`, `__parse_request`,
+  `__parse_response`, `__call_handler`, `__str_eq`, `__malloc`,
+  `__free`). The fixture opens a listener on a high port from the small
+  deterministic range `39201..39219`, connects a client, accepts the
+  connection, receives the fixed monitor HTTP request, calls
+  `__find_header_end` and `__parse_request`, verifies the parsed request
+  (`method=GET`, `path=/tasks`, `version=HTTP/1.1`), invokes a monitor
+  handler through `__call_handler` with the handler passed as a function
+  pointer (`monitor_handler as i64`), verifies the handler-populated
+  `VaisResponse` fields, sends one fixed monitor HTTP response, receives
+  it back (possibly across multiple recv calls), byte-verifies the bytes
+  through the built-in `load_byte`, calls `__parse_response`, verifies
+  the parsed response status/version/status_text/body/headers, frees
+  every parser-owned allocation, and closes every opened fd on every
+  success and error path. It does not start a long-running server.
 - `server/src/db_persistence.vais` certifies only DB persistence on a fixed
   file database (`__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
   `__sqlite_prepare`, `__sqlite_bind_int`, `__sqlite_bind_text`,
@@ -110,8 +128,15 @@ fields. The DB persistence fixture allows only `__sqlite_open`,
 `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
 `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
 `__sqlite_finalize`, `__sqlite_last_insert_rowid`, and `__sqlite_changes`,
-and is observed through integer columns only. The next adapter task is a
-small persistent request-response loop (once a narrow upstream gate covers
-the exact runtime symbols required to wire `__parse_request`,
-`__parse_response`, and `__call_handler` together); web data wiring is a
-later slice.
+and is observed through integer columns only. The HTTP request-response
+loop fixture allows only `__tcp_listen`, `__tcp_connect`, `__tcp_accept`,
+`__tcp_send`, `__tcp_recv`, `__tcp_close`, `__strlen`,
+`__find_header_end`, `__parse_request`, `__parse_response`,
+`__call_handler`, `__str_eq`, `__malloc`, and `__free`, completes one
+bounded in-process HTTP request-response cycle on `127.0.0.1` from the
+small deterministic high-port range `39201..39219`, and wires
+`__parse_request`, `__call_handler`, and `__parse_response` together
+inside one accept/send cycle. The next adapter task is to broaden DB
+persistence (query helpers, multiple rows, schema migration) once a new
+monitor-specific fixture certifies the additional `__sqlite_*` surface
+required; web data wiring is a later slice.

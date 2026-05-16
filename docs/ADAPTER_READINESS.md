@@ -15,7 +15,7 @@ Current public evidence from the sibling Vais checkout:
 - DB/server/web runtime main gate: promoted by compiler PR #53
 
 This means HTTP/DB adapter work may now start, but it does not make monitor
-complete by itself. Four monitor-specific HTTP adapter fixtures and one
+complete by itself. Five monitor-specific HTTP adapter fixtures and one
 monitor-specific DB persistence fixture are now allowed, each with its own
 narrowed symbol set:
 
@@ -54,6 +54,35 @@ narrowed symbol set:
   and value) and the `header_items` allocation are released through
   `__free`. Vais string literals cross the C boundary through explicit
   `as i64` casts.
+- `server/src/http_request_response_loop.vais` allows only `__tcp_listen`,
+  `__tcp_connect`, `__tcp_accept`, `__tcp_send`, `__tcp_recv`, `__tcp_close`,
+  `__strlen`, `__find_header_end`, `__parse_request`, `__parse_response`,
+  `__call_handler`, `__str_eq`, `__malloc`, and `__free`. The fixture
+  completes one bounded in-process HTTP request-response cycle on
+  `127.0.0.1` from the small deterministic high-port range
+  `39201..39219`: it opens a localhost listener, connects a client to
+  `127.0.0.1`, accepts the connection, receives the fixed monitor HTTP
+  request, calls `__find_header_end` and `__parse_request` against a 64-byte
+  `VaisRequest` out-buffer, verifies `method=GET`, `path=/tasks`, and
+  `version=HTTP/1.1`, invokes a monitor handler through `__call_handler`
+  with the handler passed as a function pointer (`monitor_handler as i64`),
+  verifies the handler-populated `VaisResponse` fields (`status=200`,
+  `status_text=OK`, `version=HTTP/1.1`, `header_count=0`, `body_len=11`,
+  `body={"ok":true}`), sends one fixed monitor HTTP response from the
+  accepted server fd, receives it on the client fd, byte-verifies the
+  exact response bytes through the built-in `load_byte`, calls
+  `__parse_response` against a 64-byte `VaisResponse` out-buffer, verifies
+  status, version, status_text, body_len, the exact body bytes, and the
+  `Content-Type`/`Content-Length`/`Connection` header name/value pairs,
+  frees every parser-owned allocation for both the parsed request and the
+  parsed response on every success and error path, and closes every opened
+  fd on every success and error path. The handler writes literal C string
+  pointers into the response out-buffer; these literal-owned fields are
+  not freed. Body slices alias into the raw request/response buffers and
+  are not freed; body bytes are compared by byte-copying into a fresh
+  null-terminated buffer before `__str_eq`. Runtime symbols are declared
+  with raw `i64` pointer arguments and Vais string literals cross the C
+  boundary through explicit `as i64` casts.
 - `server/src/db_persistence.vais` allows only `__sqlite_open`,
   `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
   `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
@@ -97,11 +126,11 @@ An adapter task may begin only when all of these are true:
 5. A monitor-specific runtime fixture is added before any completion claim.
 
 The current fixtures satisfy this rule only for the narrow symbol sets named
-above. Broader HTTP runtime symbols (persistent server loops,
-request-response handlers, URL parsing, additional response parser fields),
-broader `__sqlite_*` symbols (query helpers, text columns, transactions,
-schema migration), or WebSocket symbols each need a new fixture and a
-matching boundary update before they may enter `server/src` or
+above. Broader HTTP runtime behavior (persistent server loops, request-response
+handler wiring beyond the bounded fixture, URL parsing, additional response
+parser fields), broader `__sqlite_*` symbols (query helpers, text columns,
+transactions, schema migration), or WebSocket symbols each need a new fixture
+and a matching boundary update before they may enter `server/src` or
 `playground`.
 
 If the upstream wording changes but the intended certification is equivalent,

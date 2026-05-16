@@ -1,0 +1,527 @@
+# Monitor HTTP persistent request-response loop fixture.
+# This file certifies the monitor-specific HTTP request-response wiring slice
+# through one bounded in-process accept/send cycle on 127.0.0.1 from a small
+# deterministic high-port range (39201..39219): open a localhost listener,
+# connect a client, accept the connection, receive the full raw request on the
+# server fd, call __parse_request, run a monitor handler through __call_handler,
+# verify the handler-populated VaisResponse fields, send one fixed raw HTTP
+# response from the server fd, receive it on the client fd (possibly across
+# multiple recv calls), byte-verify the bytes, call __parse_response, verify
+# the parsed VaisResponse fields, free every parser-owned allocation, and
+# close every opened fd on every success and error path. It does not start a
+# long-running server.
+#
+# Runtime symbols cross the C boundary through their raw pointer ABI: host /
+# data / buffer / out-buffer arguments are declared i64 and Vais string
+# literals are passed with an explicit `as i64` cast. The handler is passed to
+# __call_handler as a function pointer through `monitor_handler as i64`.
+# The C runtime entrypoint takes `(out, handler, request)` and then calls a
+# handler with `typedef void (*vais_handler_fn)(VaisResponse* out, const
+# VaisRequest* req)`.
+
+impl fn __tcp_listen(port: i64) -> i64
+impl fn __tcp_connect(host: i64, port: i64) -> i64
+impl fn __tcp_accept(listener: i64) -> i64
+impl fn __tcp_send(fd: i64, data: i64, len: i64) -> i64
+impl fn __tcp_recv(fd: i64, buffer: i64, len: i64) -> i64
+impl fn __tcp_close(fd: i64) -> i64
+impl fn __strlen(s: i64) -> i64
+impl fn __find_header_end(buffer: i64, len: i64) -> i64
+impl fn __parse_request(out: i64, buffer: i64, len: i64) -> i64
+impl fn __parse_response(out: i64, buffer: i64, len: i64) -> i64
+impl fn __call_handler(out: i64, handler: i64, req: i64)
+impl fn __str_eq(a: i64, b: i64) -> i64
+impl fn __malloc(size: i64) -> i64
+impl fn __free(ptr: i64) -> i64
+
+fn port_range_start() -> i64 { 39201 }
+fn port_range_end_exclusive() -> i64 { 39220 }
+fn request_buffer_size() -> i64 { 1024 }
+fn response_buffer_size() -> i64 { 512 }
+
+fn loopback_host() -> i64 { "127.0.0.1" as i64 }
+
+fn expected_request() -> i64 {
+    "GET /tasks HTTP/1.1\r\nHost: monitor.local\r\nConnection: close\r\n\r\n" as i64
+}
+
+fn expected_response() -> i64 {
+    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}" as i64
+}
+
+# VaisRequest / VaisResponse share the same 64-byte layout used by the other
+# monitor HTTP fixtures (see std/http_runtime.c):
+#   offset 0:  method / status     i64
+#   offset 8:  path / status_text  char*
+#   offset 16: version             char*
+#   offset 24: header_items        pointer
+#   offset 32: header_count        i64
+#   offset 40: header_capacity     i64
+#   offset 48: body                pointer
+#   offset 56: body_len            i64
+fn struct_size() -> i64 { 64 }
+
+fn offset_method() -> i64 { 0 }
+fn offset_status() -> i64 { 0 }
+fn offset_path() -> i64 { 8 }
+fn offset_status_text() -> i64 { 8 }
+fn offset_version() -> i64 { 16 }
+fn offset_header_items() -> i64 { 24 }
+fn offset_header_count() -> i64 { 32 }
+fn offset_header_capacity() -> i64 { 40 }
+fn offset_body() -> i64 { 48 }
+fn offset_body_len() -> i64 { 56 }
+
+fn header_stride() -> i64 { 16 }
+fn header_value_offset() -> i64 { 8 }
+
+fn method_get() -> i64 { 1 }
+
+fn close_fd(fd: i64) -> i64 {
+    I fd >= 0 {
+        __tcp_close(fd)
+    }
+    0
+}
+
+fn str_eq_literal(ptr: i64, expected: i64) -> i64 {
+    I ptr == 0 {
+        return 0
+    }
+    __str_eq(ptr, expected)
+}
+
+fn header_name_at(items: i64, index: i64) -> i64 {
+    load_i64(items + index * header_stride())
+}
+
+fn header_value_at(items: i64, index: i64) -> i64 {
+    load_i64(items + index * header_stride() + header_value_offset())
+}
+
+# Free C strings owned by a parsed VaisRequest along with the header_items
+# allocation. The body pointer aliases into the raw request buffer and must
+# NOT be freed.
+fn release_request(out: i64) -> i64 {
+    path_ptr := load_i64(out + offset_path())
+    I path_ptr != 0 {
+        __free(path_ptr)
+    }
+    version_ptr := load_i64(out + offset_version())
+    I version_ptr != 0 {
+        __free(version_ptr)
+    }
+    items := load_i64(out + offset_header_items())
+    count := load_i64(out + offset_header_count())
+    I items != 0 {
+        i := mut 0
+        LW i < count {
+            name_ptr := header_name_at(items, i)
+            I name_ptr != 0 {
+                __free(name_ptr)
+            }
+            value_ptr := header_value_at(items, i)
+            I value_ptr != 0 {
+                __free(value_ptr)
+            }
+            i = i + 1
+        }
+        __free(items)
+    }
+    0
+}
+
+# Free C strings owned by a parsed VaisResponse along with the header_items
+# allocation. The body pointer aliases into the raw response buffer and must
+# NOT be freed.
+fn release_response(out: i64) -> i64 {
+    version_ptr := load_i64(out + offset_version())
+    I version_ptr != 0 {
+        __free(version_ptr)
+    }
+    status_text_ptr := load_i64(out + offset_status_text())
+    I status_text_ptr != 0 {
+        __free(status_text_ptr)
+    }
+    items := load_i64(out + offset_header_items())
+    count := load_i64(out + offset_header_count())
+    I items != 0 {
+        i := mut 0
+        LW i < count {
+            name_ptr := header_name_at(items, i)
+            I name_ptr != 0 {
+                __free(name_ptr)
+            }
+            value_ptr := header_value_at(items, i)
+            I value_ptr != 0 {
+                __free(value_ptr)
+            }
+            i = i + 1
+        }
+        __free(items)
+    }
+    0
+}
+
+# Receive `expected_len` bytes on `fd` into `buf`. Returns the number of bytes
+# received on success, or -1 on error or short close. Used for both request
+# (server side) and response (client side) reads.
+fn recv_exact(fd: i64, buf: i64, expected_len: i64) -> i64 {
+    received := mut 0
+    LW received < expected_len {
+        remaining := expected_len - received
+        n := __tcp_recv(fd, buf + received, remaining)
+        I n <= 0 {
+            return -1
+        }
+        received = received + n
+    }
+    received
+}
+
+fn buffer_matches(buf: i64, expected: i64, expected_len: i64) -> i64 {
+    i := mut 0
+    LW i < expected_len {
+        I load_byte(buf + i) != load_byte(expected + i) {
+            return 0
+        }
+        i = i + 1
+    }
+    1
+}
+
+fn body_eq_literal(body_ptr: i64, body_len: i64, expected_ptr: i64) -> i64 {
+    I body_ptr == 0 {
+        return 0
+    }
+    I body_len < 0 {
+        return 0
+    }
+    expected_len := __strlen(expected_ptr)
+    I body_len != expected_len {
+        return 0
+    }
+    copy := __malloc(body_len + 1)
+    I copy == 0 {
+        return 0
+    }
+    i := mut 0
+    LW i < body_len {
+        store_byte(copy + i, load_byte(body_ptr + i))
+        i = i + 1
+    }
+    store_byte(copy + body_len, 0)
+    eq := __str_eq(copy, expected_ptr)
+    __free(copy)
+    eq
+}
+
+# Monitor handler invoked by __call_handler. The C trampoline signature is
+# `void (*)(VaisResponse* out, const VaisRequest* req)`. The handler stores
+# literal-owned C strings and integer fields into the response out-buffer.
+# These literal pointers must NOT be freed.
+fn monitor_handler(out: i64, req: i64) {
+    store_i64(out + offset_status(), 200)
+    store_i64(out + offset_status_text(), "OK" as i64)
+    store_i64(out + offset_version(), "HTTP/1.1" as i64)
+    store_i64(out + offset_header_items(), 0)
+    store_i64(out + offset_header_count(), 0)
+    store_i64(out + offset_header_capacity(), 0)
+    store_i64(out + offset_body(), "{\"ok\":true}" as i64)
+    store_i64(out + offset_body_len(), 11)
+}
+
+# Verify the handler-populated VaisResponse out-buffer. Returns 0 on success
+# and a non-zero error code otherwise. Does not free anything because every
+# string slot is a literal pointer owned by the program image.
+fn verify_handler_output(out: i64) -> i64 {
+    I load_i64(out + offset_status()) != 200 {
+        return 70
+    }
+    I str_eq_literal(load_i64(out + offset_status_text()), "OK" as i64) != 1 {
+        return 71
+    }
+    I str_eq_literal(load_i64(out + offset_version()), "HTTP/1.1" as i64) != 1 {
+        return 72
+    }
+    I load_i64(out + offset_header_count()) != 0 {
+        return 73
+    }
+    I load_i64(out + offset_body_len()) != 11 {
+        return 74
+    }
+    body_ptr := load_i64(out + offset_body())
+    I body_ptr == 0 {
+        return 75
+    }
+    I __str_eq(body_ptr, "{\"ok\":true}" as i64) != 1 {
+        return 76
+    }
+    0
+}
+
+# Verify the parsed (client-side) VaisResponse against the expected response
+# fields and headers. Returns 0 on success and a non-zero error code otherwise.
+fn verify_parsed_response(out: i64) -> i64 {
+    I load_i64(out + offset_status()) != 200 {
+        return 80
+    }
+    I str_eq_literal(load_i64(out + offset_version()), "HTTP/1.1" as i64) != 1 {
+        return 81
+    }
+    I str_eq_literal(load_i64(out + offset_status_text()), "OK" as i64) != 1 {
+        return 82
+    }
+    body_len := load_i64(out + offset_body_len())
+    I body_len != 11 {
+        return 83
+    }
+    body_ptr := load_i64(out + offset_body())
+    I body_eq_literal(body_ptr, body_len, "{\"ok\":true}" as i64) != 1 {
+        return 84
+    }
+    I load_i64(out + offset_header_count()) != 3 {
+        return 85
+    }
+    items := load_i64(out + offset_header_items())
+    I items == 0 {
+        return 86
+    }
+    I str_eq_literal(header_name_at(items, 0), "Content-Type" as i64) != 1 {
+        return 87
+    }
+    I str_eq_literal(header_value_at(items, 0), "application/json" as i64) != 1 {
+        return 88
+    }
+    I str_eq_literal(header_name_at(items, 1), "Content-Length" as i64) != 1 {
+        return 89
+    }
+    I str_eq_literal(header_value_at(items, 1), "11" as i64) != 1 {
+        return 90
+    }
+    I str_eq_literal(header_name_at(items, 2), "Connection" as i64) != 1 {
+        return 91
+    }
+    I str_eq_literal(header_value_at(items, 2), "close" as i64) != 1 {
+        return 92
+    }
+    0
+}
+
+# Verify the parsed (server-side) VaisRequest against the fixed monitor
+# request. Returns 0 on success and a non-zero error code otherwise.
+fn verify_parsed_request(req: i64) -> i64 {
+    I load_i64(req + offset_method()) != method_get() {
+        return 60
+    }
+    I str_eq_literal(load_i64(req + offset_path()), "/tasks" as i64) != 1 {
+        return 61
+    }
+    I str_eq_literal(load_i64(req + offset_version()), "HTTP/1.1" as i64) != 1 {
+        return 62
+    }
+    0
+}
+
+# Perform one full request-response cycle on the given port. Returns 0 on
+# success and a non-zero error code otherwise. Every fd opened by this
+# function is closed before returning on every path, and every parser-owned
+# allocation is freed.
+fn run_cycle(
+    port: i64,
+    req_buf: i64,
+    resp_buf: i64,
+    parsed_request: i64,
+    handler_response: i64,
+    parsed_response: i64,
+) -> i64 {
+    request_ptr := expected_request()
+    request_len := __strlen(request_ptr)
+    I request_len <= 0 {
+        return 21
+    }
+    I request_len > request_buffer_size() {
+        return 22
+    }
+
+    response_ptr := expected_response()
+    response_len := __strlen(response_ptr)
+    I response_len <= 0 {
+        return 23
+    }
+    I response_len > response_buffer_size() {
+        return 24
+    }
+
+    listener := __tcp_listen(port)
+    I listener < 0 {
+        return 1
+    }
+
+    client := __tcp_connect(loopback_host(), port)
+    I client < 0 {
+        close_fd(listener)
+        return 2
+    }
+
+    server := __tcp_accept(listener)
+    I server < 0 {
+        close_fd(client)
+        close_fd(listener)
+        return 3
+    }
+
+    sent_req := __tcp_send(client, request_ptr, request_len)
+    I sent_req != request_len {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 4
+    }
+
+    received_req := recv_exact(server, req_buf, request_len)
+    I received_req != request_len {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 5
+    }
+
+    I buffer_matches(req_buf, request_ptr, request_len) != 1 {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 6
+    }
+
+    header_end := __find_header_end(req_buf, request_len)
+    I header_end <= 0 {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 7
+    }
+
+    __parse_request(parsed_request, req_buf, request_len)
+    parse_req_rc := verify_parsed_request(parsed_request)
+    I parse_req_rc != 0 {
+        release_request(parsed_request)
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return parse_req_rc
+    }
+
+    __call_handler(handler_response, monitor_handler as i64, parsed_request)
+    handler_rc := verify_handler_output(handler_response)
+    I handler_rc != 0 {
+        release_request(parsed_request)
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return handler_rc
+    }
+
+    release_request(parsed_request)
+
+    sent_resp := __tcp_send(server, response_ptr, response_len)
+    I sent_resp != response_len {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 8
+    }
+
+    received_resp := recv_exact(client, resp_buf, response_len)
+    I received_resp != response_len {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 9
+    }
+
+    I buffer_matches(resp_buf, response_ptr, response_len) != 1 {
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return 11
+    }
+
+    __parse_response(parsed_response, resp_buf, response_len)
+    parse_resp_rc := verify_parsed_response(parsed_response)
+    I parse_resp_rc != 0 {
+        release_response(parsed_response)
+        close_fd(server)
+        close_fd(client)
+        close_fd(listener)
+        return parse_resp_rc
+    }
+
+    release_response(parsed_response)
+    close_fd(server)
+    close_fd(client)
+    close_fd(listener)
+    0
+}
+
+fn try_port_range(
+    req_buf: i64,
+    resp_buf: i64,
+    parsed_request: i64,
+    handler_response: i64,
+    parsed_response: i64,
+) -> i64 {
+    last_err := mut 30
+    port := mut port_range_start()
+    LW port < port_range_end_exclusive() {
+        rc := run_cycle(port, req_buf, resp_buf, parsed_request, handler_response, parsed_response)
+        I rc == 0 {
+            return 0
+        }
+        last_err = rc
+        port = port + 1
+    }
+    last_err
+}
+
+fn main() -> i64 {
+    req_buf := __malloc(request_buffer_size())
+    I req_buf == 0 {
+        return 40
+    }
+    resp_buf := __malloc(response_buffer_size())
+    I resp_buf == 0 {
+        __free(req_buf)
+        return 41
+    }
+    parsed_request := __malloc(struct_size())
+    I parsed_request == 0 {
+        __free(resp_buf)
+        __free(req_buf)
+        return 42
+    }
+    handler_response := __malloc(struct_size())
+    I handler_response == 0 {
+        __free(parsed_request)
+        __free(resp_buf)
+        __free(req_buf)
+        return 43
+    }
+    parsed_response := __malloc(struct_size())
+    I parsed_response == 0 {
+        __free(handler_response)
+        __free(parsed_request)
+        __free(resp_buf)
+        __free(req_buf)
+        return 44
+    }
+
+    rc := try_port_range(req_buf, resp_buf, parsed_request, handler_response, parsed_response)
+
+    __free(parsed_response)
+    __free(handler_response)
+    __free(parsed_request)
+    __free(resp_buf)
+    __free(req_buf)
+    rc
+}

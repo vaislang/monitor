@@ -105,17 +105,45 @@
   allowlist applies only to `server/src/http_response_parse.vais`; other HTTP
   runtime, `__tcp_*`, DB, and WS runtime symbols remain blocked across
   `server/src` and `playground`.
+- Added `server/src/http_request_response_loop.vais` and
+  `scripts/check-http-request-response-loop.sh` to certify the
+  monitor-specific persistent request-response loop slice. The fixture
+  completes one bounded in-process HTTP request-response cycle on
+  `127.0.0.1` from the small deterministic high-port range
+  `39201..39219`: it opens a localhost listener, connects a client to
+  `127.0.0.1`, accepts the connection, receives the fixed monitor HTTP
+  request, calls `__find_header_end` and `__parse_request`, verifies the
+  parsed request (`method=GET`, `path=/tasks`, `version=HTTP/1.1`),
+  invokes a monitor handler through `__call_handler` with the handler
+  passed as a function pointer (`monitor_handler as i64`), verifies the
+  handler-populated `VaisResponse` fields (`status=200`,
+  `status_text=OK`, `version=HTTP/1.1`, `header_count=0`, `body_len=11`,
+  `body={"ok":true}`), sends one fixed monitor HTTP response from the
+  accepted server fd, receives it on the client fd (possibly across
+  multiple recv calls), byte-verifies the exact response bytes through
+  the built-in `load_byte`, calls `__parse_response`, verifies the parsed
+  response status/version/status_text/body/headers, frees every
+  parser-owned allocation for both the parsed request and the parsed
+  response on every success and error path, and closes every opened fd
+  on every success and error path. The fixture exercises only
+  `__tcp_listen`, `__tcp_connect`, `__tcp_accept`, `__tcp_send`,
+  `__tcp_recv`, `__tcp_close`, `__strlen`, `__find_header_end`,
+  `__parse_request`, `__parse_response`, `__call_handler`, `__str_eq`,
+  `__malloc`, and `__free` through their explicit C ABI (Vais string
+  literals cross the boundary through `as i64` casts) and does not start
+  a long-running server.
+- Narrowed `scripts/check-runtime-boundary.sh` so the HTTP request-response
+  loop symbol allowlist applies only to
+  `server/src/http_request_response_loop.vais`; other HTTP runtime,
+  `__tcp_*`, DB, and WS runtime symbols remain blocked across
+  `server/src` and `playground`.
 
 ## Next
 
-1. Add a small persistent request-response loop fixture once a named upstream
-   gate covers the exact runtime symbols required to wire `__parse_request`,
-   `__parse_response`, and `__call_handler` together inside one accept/send
-   cycle.
-2. Broaden DB persistence (query helpers, multiple rows, schema migration)
+1. Broaden DB persistence (query helpers, multiple rows, schema migration)
    only after a new monitor-specific fixture certifies the additional
    `__sqlite_*` surface required.
-3. Replace the static TypeScript task state with data produced through the Vais
+2. Replace the static TypeScript task state with data produced through the Vais
    adapter path.
 
 ## Completion Rule
