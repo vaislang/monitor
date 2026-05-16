@@ -39,14 +39,14 @@ system `grep` so hosted runners do not need an extra package for source scans.
 Hosted CI has been verified:
 
 - Workflow: `Monitor Reference Gates`
-- Run: `https://github.com/vaislang/monitor/actions/runs/25949766332`
-- Job: `reference-gates` (`76285202845`)
-- Commit: `e68ce6e` (`test: add monitor request-response loop fixture`)
+- Run: `https://github.com/vaislang/monitor/actions/runs/25950339533`
+- Job: `reference-gates` (`76286839051`)
+- Commit: `df1cbf0` (`test: add monitor DB query rows fixture`)
 - Result: passed
 - Included checks: adapter readiness status, IR layout, native domain smoke,
   runtime boundary, HTTP adapter fixture, HTTP request fixture, HTTP response
   fixture, HTTP response parse fixture, HTTP request-response loop fixture,
-  DB persistence fixture, playground sync, and web build
+  DB persistence fixture, DB query rows fixture, playground sync, and web build
 
 Treat hosted CI as required evidence for future broadening when a change touches
 the compiler gate, runtime-boundary gate, playground source, or web shell.
