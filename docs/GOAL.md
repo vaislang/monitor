@@ -18,6 +18,7 @@ from the official Vais docs without relying on hidden project memory.
 - HTTP listener lifecycle gate: `scripts/check-http-adapter.sh`
 - HTTP request parsing/routing gate: `scripts/check-http-request.sh`
 - HTTP response loopback gate: `scripts/check-http-response.sh`
+- HTTP response parsing gate: `scripts/check-http-response-parse.sh`
 - DB persistence gate: `scripts/check-db-persistence.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
@@ -46,7 +47,7 @@ Do not add placeholder runtime calls that only fail at link time. Add a
 monitor-specific runtime fixture and narrow `scripts/check-runtime-boundary.sh`
 before claiming adapter completion.
 
-Current HTTP adapter certification is limited to three narrow fixtures:
+Current HTTP adapter certification is limited to four narrow fixtures:
 
 - Listener open/close through `__tcp_listen` and `__tcp_close` in
   `server/src/http_adapter.vais`.
@@ -64,6 +65,13 @@ Current HTTP adapter certification is limited to three narrow fixtures:
   fd, receives it on the client fd (possibly across multiple recv calls),
   byte-verifies the exact response bytes through the built-in `load_byte`,
   and closes every opened fd on every success and error path.
+- Response parsing through `__strlen`, `__parse_response`, `__str_eq`,
+  `__malloc`, and `__free` in `server/src/http_response_parse.vais`. The
+  fixture parses two fixed raw HTTP response strings (`200 OK` JSON and
+  `404 Not Found`) through `__parse_response`, reads the 64-byte
+  `VaisResponse` C out-pointer through `load_i64`, asserts `status`,
+  `version`, `status_text`, `body_len`, the exact body bytes, and the
+  `Content-Type`/`Content-Length`/`Connection` header name/value pairs.
 
 Current DB adapter certification is limited to one narrow fixture:
 
@@ -75,6 +83,5 @@ Current DB adapter certification is limited to one narrow fixture:
   `server/src/db_persistence.vais`. Persistence is observed through integer
   columns only.
 
-This is not response parsing, a long-running server, multi-row text reads,
-transactions, schema migration, query helpers, or production server
-completion.
+This is not a long-running server, multi-row text reads, transactions, schema
+migration, query helpers, URL parsing, or production server completion.

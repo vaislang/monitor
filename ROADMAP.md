@@ -86,12 +86,32 @@
   allowlist applies only to `server/src/http_response.vais`; other `__tcp_*`,
   HTTP, DB, and WS runtime symbols remain blocked across `server/src` and
   `playground`.
+- Added `server/src/http_response_parse.vais` and
+  `scripts/check-http-response-parse.sh` to certify the monitor-specific HTTP
+  response parsing slice. The fixture parses two fixed raw HTTP response
+  strings through `__parse_response`, verifies the 64-byte `VaisResponse` C
+  out-pointer layout via `load_i64`, asserts the status code, `HTTP/1.1`
+  version, status text, body length, and exact body bytes for a `200 OK`
+  JSON response and a `404 Not Found` response, and walks the
+  `header_items` array (16 bytes per entry) to confirm `Content-Type`,
+  `Content-Length`, and `Connection` header names and values. The fixture
+  exercises only `__strlen`, `__parse_response`, `__str_eq`, `__malloc`, and
+  `__free` through their explicit C ABI: Vais string literals cross the C
+  boundary through `as i64` casts, and the body slice (which is not
+  null-terminated and aliases the input buffer) is byte-copied into a fresh
+  null-terminated buffer before equality comparison so the raw response
+  buffer is never freed.
+- Narrowed `scripts/check-runtime-boundary.sh` so the HTTP response parsing
+  allowlist applies only to `server/src/http_response_parse.vais`; other HTTP
+  runtime, `__tcp_*`, DB, and WS runtime symbols remain blocked across
+  `server/src` and `playground`.
 
 ## Next
 
-1. Add a fixture for HTTP response parsing or a small persistent
-   request-response loop once a named upstream gate covers the exact runtime
-   symbols.
+1. Add a small persistent request-response loop fixture once a named upstream
+   gate covers the exact runtime symbols required to wire `__parse_request`,
+   `__parse_response`, and `__call_handler` together inside one accept/send
+   cycle.
 2. Broaden DB persistence (query helpers, multiple rows, schema migration)
    only after a new monitor-specific fixture certifies the additional
    `__sqlite_*` surface required.

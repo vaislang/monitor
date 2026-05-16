@@ -31,6 +31,17 @@ The rewrite starts with the smallest evidence-backed slice:
   (possibly across multiple recv calls), byte-verifies the bytes through the
   built-in `load_byte`, and closes every opened fd on every success and
   error path.
+- `scripts/check-http-response-parse.sh` certifies only HTTP response parsing
+  on fixed raw HTTP response strings (no long-running server, no sockets).
+  The fixture allocates a 64-byte `VaisResponse` output buffer, calls
+  `__parse_response(out, raw_ptr, len)`, reads the C out-pointer through the
+  built-in `load_i64`, asserts the status code, version (`HTTP/1.1`), status
+  text, body length, and exact body bytes for a `200 OK` JSON response and a
+  `404 Not Found` response, and walks the `header_items` allocation (16
+  bytes per entry) to confirm `Content-Type`, `Content-Length`, and
+  `Connection` header name/value pairs. The body slice aliases the raw
+  response buffer and is byte-copied into a fresh null-terminated buffer
+  through `load_byte`/`store_byte` before equality comparison.
 - `scripts/check-db-persistence.sh` certifies only DB persistence against a
   fixed file SQLite database. The fixture opens the database, creates a
   `monitor_tasks` table, inserts one row, closes the connection, reopens the

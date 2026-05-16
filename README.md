@@ -58,6 +58,21 @@ from a clean vertical slice using the current official Vais docs.
 - `scripts/check-http-response.sh`: emits IR, links the HTTP runtime fixture,
   and runs the response loopback smoke on `127.0.0.1` from a small
   deterministic high-port range.
+- `server/src/http_response_parse.vais`: monitor-specific HTTP response
+  parsing fixture. It certifies `__strlen`, `__parse_response`, `__str_eq`,
+  `__malloc`, and `__free` against two fixed raw HTTP response strings
+  (`200 OK` JSON and `404 Not Found`) by calling the runtime parser through
+  its explicit C ABI: a 64-byte `VaisResponse` output buffer is allocated,
+  `__parse_response(out, raw_ptr, len)` populates it, and fields are read
+  via the built-in `load_i64`. The fixture asserts `status`, `version`,
+  `status_text`, `body_len`, the exact body bytes, and the
+  `Content-Type`/`Content-Length`/`Connection` header name/value pairs by
+  walking the 16-bytes-per-entry `header_items` allocation. The body slice
+  aliases the raw response buffer and is byte-copied into a fresh
+  null-terminated buffer through `load_byte`/`store_byte` before equality
+  comparison; only the C strings owned by the parsed response and the
+  `header_items` allocation are released through `__free`. The fixture
+  does not open any sockets and does not start a long-running server.
 - `server/src/db_persistence.vais`: monitor-specific DB persistence fixture. It
   certifies `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
   `__sqlite_prepare`, `__sqlite_bind_int`, `__sqlite_bind_text`,
@@ -68,6 +83,9 @@ from a clean vertical slice using the current official Vais docs.
   persisted row through `SELECT COUNT(*)/SUM(priority)/SUM(title_len)`.
   Path/SQL/text arguments cross the C boundary through explicit `as i64`
   casts.
+- `scripts/check-http-response-parse.sh`: emits IR, links the HTTP runtime
+  fixture, and runs the response parsing smoke against two fixed raw HTTP
+  response strings.
 - `scripts/check-db-persistence.sh`: emits IR, links the SQLite runtime fixture
   (`std/sqlite_runtime.c` plus `-lsqlite3`), and runs the persistence smoke.
 - `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
@@ -113,14 +131,15 @@ Read in this order before writing any Vais:
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
 `scripts/check-adapter-readiness.sh --require-promoted` passes against the
-current compiler baseline. Four monitor-specific fixtures are now certified:
+current compiler baseline. Five monitor-specific fixtures are now certified:
 HTTP listener open/close, HTTP request parsing/routing on fixed raw HTTP
 strings, one deterministic in-process HTTP response loopback on
-`127.0.0.1`, and DB persistence across close/reopen on a fixed SQLite file
-database. The next implementation slice is HTTP response parsing or a small
-persistent request-response loop (once a narrow upstream gate covers the
-exact runtime symbols); broaden only after each new slice is reproducible
-from a clean checkout.
+`127.0.0.1`, HTTP response parsing on fixed raw HTTP response strings, and
+DB persistence across close/reopen on a fixed SQLite file database. The next
+implementation slice is a small persistent request-response loop (once a
+narrow upstream gate covers the exact runtime symbols required to wire
+`__parse_request`, `__parse_response`, and `__call_handler` together);
+broaden only after each new slice is reproducible from a clean checkout.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

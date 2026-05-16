@@ -16,6 +16,8 @@ slice has both IR and native smoke gates.
 - HTTP response loopback (listen / connect / accept / send / recv /
   byte-verify / close) through `server/src/http_response.vais` and
   `scripts/check-http-response.sh`
+- HTTP response parsing through `server/src/http_response_parse.vais` and
+  `scripts/check-http-response-parse.sh`
 - DB persistence (open / drop / create / insert / close / reopen / select /
   close) through `server/src/db_persistence.vais` and
   `scripts/check-db-persistence.sh`
@@ -91,6 +93,37 @@ The exact monitor response bytes verified by the fixture are:
 HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{"ok":true}
 ```
 
+`server/src/http_response_parse.vais` may call only:
+
+- `__strlen`
+- `__parse_response`
+- `__str_eq`
+- `__malloc`
+- `__free`
+
+These certify that the monitor app can parse a fixed raw HTTP response through
+the public HTTP runtime and observe the resulting `VaisResponse` struct fields.
+The fixture parses two responses:
+
+```
+HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{"ok":true}
+HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nnot-found
+```
+
+For each response it asserts `status`, `version` (`HTTP/1.1`), `status_text`,
+`body_len`, and the exact body bytes, plus header `name`/`value` pairs walked
+through the 16-bytes-per-entry `header_items` array. The fixture exercises the
+explicit C ABI for `__parse_response`: it allocates a 64-byte `VaisResponse`
+output buffer through `__malloc`, calls
+`__parse_response(out, raw_ptr, len)`, reads each scalar field through the
+built-in `load_i64`, frees the C strings owned by the parsed response
+(`version`, `status_text`, every header name and value) and the
+`header_items` allocation through `__free`, and frees the output buffer.
+The `body` pointer aliases into the raw response buffer and is therefore
+never freed; the body bytes are copied into a fresh null-terminated buffer
+through `load_byte`/`store_byte` before equality comparison so `__str_eq`
+never reads past the end of the parsed slice.
+
 `server/src/db_persistence.vais` may call only:
 
 - `__sqlite_open`
@@ -131,7 +164,9 @@ repository adds another narrowed fixture for the exact symbols being used:
 - other HTTP runtime symbols (only `__strlen`, `__find_header_end`,
   `__parse_request`, `__str_eq`, `__malloc`, and `__free` are certified in
   `http_request.vais`; only `__strlen`, `__malloc`, and `__free` are
-  certified in `http_response.vais`)
+  certified in `http_response.vais`; only `__strlen`, `__parse_response`,
+  `__str_eq`, `__malloc`, and `__free` are certified in
+  `http_response_parse.vais`)
 - other `__sqlite_*` symbols (only `__sqlite_open`, `__sqlite_close`,
   `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
   `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,

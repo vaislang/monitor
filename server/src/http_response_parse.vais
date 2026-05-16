@@ -1,0 +1,319 @@
+# Monitor HTTP response parsing fixture.
+# This file certifies the monitor-specific HTTP response parsing slice through
+# fixed raw HTTP response strings. It does not start a long-running server and
+# does not open any sockets: only deterministic in-memory parsing is exercised
+# here.
+#
+# The runtime parser uses an explicit C ABI: VaisResponse is a 64-byte output
+# struct returned via an out-pointer, and string fields are plain C char*.
+# Every runtime symbol is declared with i64 pointer arguments and the result is
+# read through the built-in load_i64 against the raw output buffer.
+
+impl fn __strlen(s: i64) -> i64
+impl fn __parse_response(out: i64, buffer: i64, len: i64) -> i64
+impl fn __str_eq(a: i64, b: i64) -> i64
+impl fn __malloc(size: i64) -> i64
+impl fn __free(ptr: i64) -> i64
+
+# VaisResponse C layout (see std/http_runtime.c):
+#   offset 0:  status          i64
+#   offset 8:  status_text     char*
+#   offset 16: version         char*
+#   offset 24: header_items    pointer
+#   offset 32: header_count    i64
+#   offset 40: header_capacity i64
+#   offset 48: body            pointer
+#   offset 56: body_len        i64
+fn response_size() -> i64 { 64 }
+
+fn offset_status() -> i64 { 0 }
+fn offset_status_text() -> i64 { 8 }
+fn offset_version() -> i64 { 16 }
+fn offset_header_items() -> i64 { 24 }
+fn offset_header_count() -> i64 { 32 }
+fn offset_body() -> i64 { 48 }
+fn offset_body_len() -> i64 { 56 }
+
+# Header items layout: 16 bytes per entry. name char* at items + i*16,
+# value char* at items + i*16 + 8.
+fn header_stride() -> i64 { 16 }
+fn header_value_offset() -> i64 { 8 }
+
+# Compare a parsed C string pointer against a Vais string literal. The literal
+# crosses the C boundary through an explicit `as i64` cast so the runtime never
+# receives a Vais fat string in a pointer slot.
+fn str_eq_literal(ptr: i64, expected: str) -> i64 {
+    I ptr == 0 {
+        return 0
+    }
+    __str_eq(ptr, expected as i64)
+}
+
+fn header_name_at(items: i64, index: i64) -> i64 {
+    load_i64(items + index * header_stride())
+}
+
+fn header_value_at(items: i64, index: i64) -> i64 {
+    load_i64(items + index * header_stride() + header_value_offset())
+}
+
+# Free the C strings owned by the parsed VaisResponse along with the header
+# items allocation. The body pointer aliases into the raw response buffer and
+# must NOT be freed.
+fn release_response(out: i64) -> i64 {
+    version_ptr := load_i64(out + offset_version())
+    I version_ptr != 0 {
+        __free(version_ptr)
+    }
+    status_text_ptr := load_i64(out + offset_status_text())
+    I status_text_ptr != 0 {
+        __free(status_text_ptr)
+    }
+    items := load_i64(out + offset_header_items())
+    count := load_i64(out + offset_header_count())
+    I items != 0 {
+        i := mut 0
+        LW i < count {
+            name_ptr := header_name_at(items, i)
+            I name_ptr != 0 {
+                __free(name_ptr)
+            }
+            value_ptr := header_value_at(items, i)
+            I value_ptr != 0 {
+                __free(value_ptr)
+            }
+            i = i + 1
+        }
+        __free(items)
+    }
+    0
+}
+
+# Allocate a 64-byte VaisResponse buffer and parse `raw` into it. Returns 0 on
+# success and a negative code on failure. The caller owns the buffer and the
+# parsed allocations; release_response + __free clean both up.
+fn parse_into(raw: str, out: i64) -> i64 {
+    raw_ptr := raw as i64
+    len := __strlen(raw_ptr)
+    I len <= 0 {
+        return -1
+    }
+    __parse_response(out, raw_ptr, len)
+    0
+}
+
+# Byte-compare a body pointer/length pair against an expected literal. The body
+# slice from __parse_response is not null-terminated, so we cannot use __str_eq
+# directly; we copy the slice into a fresh null-terminated buffer instead.
+fn body_eq_literal(body_ptr: i64, body_len: i64, expected: str) -> i64 {
+    I body_ptr == 0 {
+        return 0
+    }
+    I body_len < 0 {
+        return 0
+    }
+    expected_ptr := expected as i64
+    expected_len := __strlen(expected_ptr)
+    I body_len != expected_len {
+        return 0
+    }
+    copy := __malloc(body_len + 1)
+    I copy == 0 {
+        return 0
+    }
+    i := mut 0
+    LW i < body_len {
+        store_byte(copy + i, load_byte(body_ptr + i))
+        i = i + 1
+    }
+    store_byte(copy + body_len, 0)
+    eq := __str_eq(copy, expected_ptr)
+    __free(copy)
+    eq
+}
+
+fn check_ok_response() -> i64 {
+    raw := "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}"
+    out := __malloc(response_size())
+    I out == 0 {
+        return 101
+    }
+    rc := parse_into(raw, out)
+    I rc != 0 {
+        release_response(out)
+        __free(out)
+        return 102
+    }
+
+    status := load_i64(out + offset_status())
+    I status != 200 {
+        release_response(out)
+        __free(out)
+        return 110
+    }
+
+    version_ptr := load_i64(out + offset_version())
+    I str_eq_literal(version_ptr, "HTTP/1.1") != 1 {
+        release_response(out)
+        __free(out)
+        return 111
+    }
+
+    status_text_ptr := load_i64(out + offset_status_text())
+    I str_eq_literal(status_text_ptr, "OK") != 1 {
+        release_response(out)
+        __free(out)
+        return 112
+    }
+
+    body_len := load_i64(out + offset_body_len())
+    I body_len != 11 {
+        release_response(out)
+        __free(out)
+        return 113
+    }
+
+    body_ptr := load_i64(out + offset_body())
+    I body_eq_literal(body_ptr, body_len, "{\"ok\":true}") != 1 {
+        release_response(out)
+        __free(out)
+        return 114
+    }
+
+    header_count := load_i64(out + offset_header_count())
+    I header_count != 3 {
+        release_response(out)
+        __free(out)
+        return 120
+    }
+
+    items := load_i64(out + offset_header_items())
+    I items == 0 {
+        release_response(out)
+        __free(out)
+        return 121
+    }
+
+    I str_eq_literal(header_name_at(items, 0), "Content-Type") != 1 {
+        release_response(out)
+        __free(out)
+        return 130
+    }
+    I str_eq_literal(header_value_at(items, 0), "application/json") != 1 {
+        release_response(out)
+        __free(out)
+        return 131
+    }
+
+    I str_eq_literal(header_name_at(items, 1), "Content-Length") != 1 {
+        release_response(out)
+        __free(out)
+        return 132
+    }
+    I str_eq_literal(header_value_at(items, 1), "11") != 1 {
+        release_response(out)
+        __free(out)
+        return 133
+    }
+
+    I str_eq_literal(header_name_at(items, 2), "Connection") != 1 {
+        release_response(out)
+        __free(out)
+        return 134
+    }
+    I str_eq_literal(header_value_at(items, 2), "close") != 1 {
+        release_response(out)
+        __free(out)
+        return 135
+    }
+
+    release_response(out)
+    __free(out)
+    0
+}
+
+fn check_not_found_response() -> i64 {
+    raw := "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nnot-found"
+    out := __malloc(response_size())
+    I out == 0 {
+        return 201
+    }
+    rc := parse_into(raw, out)
+    I rc != 0 {
+        release_response(out)
+        __free(out)
+        return 202
+    }
+
+    status := load_i64(out + offset_status())
+    I status != 404 {
+        release_response(out)
+        __free(out)
+        return 210
+    }
+
+    version_ptr := load_i64(out + offset_version())
+    I str_eq_literal(version_ptr, "HTTP/1.1") != 1 {
+        release_response(out)
+        __free(out)
+        return 211
+    }
+
+    status_text_ptr := load_i64(out + offset_status_text())
+    I str_eq_literal(status_text_ptr, "Not Found") != 1 {
+        release_response(out)
+        __free(out)
+        return 212
+    }
+
+    body_len := load_i64(out + offset_body_len())
+    I body_len != 9 {
+        release_response(out)
+        __free(out)
+        return 213
+    }
+
+    body_ptr := load_i64(out + offset_body())
+    I body_eq_literal(body_ptr, body_len, "not-found") != 1 {
+        release_response(out)
+        __free(out)
+        return 214
+    }
+
+    header_count := load_i64(out + offset_header_count())
+    I header_count != 1 {
+        release_response(out)
+        __free(out)
+        return 220
+    }
+
+    items := load_i64(out + offset_header_items())
+    I items == 0 {
+        release_response(out)
+        __free(out)
+        return 221
+    }
+
+    I str_eq_literal(header_name_at(items, 0), "Content-Length") != 1 {
+        release_response(out)
+        __free(out)
+        return 230
+    }
+    I str_eq_literal(header_value_at(items, 0), "9") != 1 {
+        release_response(out)
+        __free(out)
+        return 231
+    }
+
+    release_response(out)
+    __free(out)
+    0
+}
+
+fn main() -> i64 {
+    rc := check_ok_response()
+    I rc != 0 {
+        return rc
+    }
+    check_not_found_response()
+}

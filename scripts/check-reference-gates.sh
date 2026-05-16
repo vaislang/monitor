@@ -11,6 +11,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT_DIR/scripts/check-http-adapter.sh"
 "$ROOT_DIR/scripts/check-http-request.sh"
 "$ROOT_DIR/scripts/check-http-response.sh"
+"$ROOT_DIR/scripts/check-http-response-parse.sh"
 "$ROOT_DIR/scripts/check-db-persistence.sh"
 
 if ! cmp -s "$ROOT_DIR/server/src/main.vais" "$ROOT_DIR/playground/monitor.vais"; then
