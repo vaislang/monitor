@@ -15,6 +15,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 "$ROOT_DIR/scripts/check-http-request-response-loop.sh"
 "$ROOT_DIR/scripts/check-db-persistence.sh"
 "$ROOT_DIR/scripts/check-db-query-rows.sh"
+"$ROOT_DIR/scripts/check-db-transactions.sh"
 
 if ! cmp -s "$ROOT_DIR/server/src/main.vais" "$ROOT_DIR/playground/monitor.vais"; then
   echo "playground/monitor.vais is out of sync with server/src/main.vais" >&2

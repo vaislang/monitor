@@ -1,7 +1,7 @@
 # Runtime Boundary
 
 The current monitor reference app intentionally stops at a pure server-domain
-slice, five narrow HTTP runtime fixtures, two narrow DB fixtures, and a static
+slice, five narrow HTTP runtime fixtures, three narrow DB fixtures, and a static
 web shell. The domain slice has both IR and native smoke gates.
 
 ## Allowed Now
@@ -32,6 +32,13 @@ web shell. The domain slice has both IR and native smoke gates.
   with column count + names + types + values across three rows + DONE /
   close) through `server/src/db_query_rows.vais` and
   `scripts/check-db-query-rows.sh`
+- DB transactions (open / drop / create / `BEGIN IMMEDIATE` /
+  insert / verify __sqlite_changes / `ROLLBACK` / verify COUNT(*)=0 /
+  `BEGIN IMMEDIATE` / two inserts via one prepared statement reused
+  with `__sqlite_reset` / `COMMIT` / verify COUNT(*)=2 and
+  SUM(priority)=11 / close / reopen / verify COUNT(*)=2 and
+  SUM(priority)=11 / close) through `server/src/db_transactions.vais`
+  and `scripts/check-db-transactions.sh`
 - Playground source synchronization through `playground/monitor.vais`
 - Static web build through `web/`
 
@@ -277,6 +284,44 @@ does not use a callback, and does not start a server. Runtime symbols
 are declared with raw `i64` pointer arguments and Vais string literals
 cross the C boundary through explicit `as i64` casts.
 
+`server/src/db_transactions.vais` may call only:
+
+- `__sqlite_open`
+- `__sqlite_close`
+- `__sqlite_exec`
+- `__sqlite_prepare`
+- `__sqlite_bind_int`
+- `__sqlite_bind_text`
+- `__sqlite_step`
+- `__sqlite_column_int`
+- `__sqlite_finalize`
+- `__sqlite_reset`
+- `__sqlite_changes`
+
+These certify that the monitor app can drive one bounded SQLite rollback
+transaction and one bounded commit transaction through the public SQLite
+runtime. The fixture pins the database file to
+`/tmp/vais-monitor-db-transactions.sqlite` (the script removes that file plus
+its `-wal`/`-shm` siblings before and after each run), drops/creates the
+`monitor_events` table, opens a `BEGIN IMMEDIATE` transaction, inserts one row
+through a prepared statement (`title="rolled back"`, `priority=99`), verifies
+that `__sqlite_changes` is `1`, rolls the transaction back through `ROLLBACK`,
+and verifies through a prepared `SELECT COUNT(*) FROM monitor_events` query
+that the table is empty. It then opens a second `BEGIN IMMEDIATE` transaction,
+inserts exactly two rows by reusing one prepared
+`INSERT INTO monitor_events (title, priority) VALUES (?, ?)` statement with
+`__sqlite_reset` between executions (`title="committed low"`, `priority=4`
+and `title="committed high"`, `priority=7`), verifies `__sqlite_changes` is
+`1` after each insert, commits through `COMMIT`, verifies `COUNT(*)=2` and
+`SUM(priority)=11`, closes the connection, reopens the same file, and verifies
+the committed rows are still present after close/reopen. Every prepared
+statement is finalized and every handle is closed on every success and error
+path; error paths inside an open transaction best-effort `ROLLBACK` before
+returning. The fixture does not use text-column reads, callbacks, generic
+string helpers, generic allocator helpers, or any server runtime. Runtime
+symbols are declared with raw `i64` pointer arguments and Vais string literals
+cross the C boundary through explicit `as i64` casts.
+
 ## Still Blocked
 
 Do not call these runtime families from the reference app source until this
@@ -304,7 +349,11 @@ repository adds another narrowed fixture for the exact symbols being used:
   `__sqlite_finalize`, `__sqlite_last_insert_rowid`, and `__sqlite_changes`
   are certified in `db_persistence.vais`; only those eleven plus
   `__sqlite_column_type`, `__sqlite_column_count`, `__sqlite_column_name`,
-  and `__sqlite_reset` are certified in `db_query_rows.vais`)
+  and `__sqlite_reset` are certified in `db_query_rows.vais`; only
+  `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`,
+  `__sqlite_bind_int`, `__sqlite_bind_text`, `__sqlite_step`,
+  `__sqlite_column_int`, `__sqlite_finalize`, `__sqlite_reset`, and
+  `__sqlite_changes` are certified in `db_transactions.vais`)
 - `db_*`
 - `ws_*`
 

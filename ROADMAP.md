@@ -171,12 +171,46 @@
   `server/src/db_query_rows.vais`; other `__sqlite_*`, HTTP runtime,
   `__tcp_*`, and WS runtime symbols remain blocked across `server/src`
   and `playground`.
+- Added `server/src/db_transactions.vais` and
+  `scripts/check-db-transactions.sh` to certify the monitor-specific
+  SQLite transaction slice. The fixture pins the database file to
+  `/tmp/vais-monitor-db-transactions.sqlite`, drops/creates
+  `monitor_events`, opens a `BEGIN IMMEDIATE` transaction, inserts one
+  row through a prepared statement (`title="rolled back"`,
+  `priority=99`), verifies `__sqlite_changes` is `1`, issues
+  `ROLLBACK` through `__sqlite_exec`, verifies that a prepared
+  `SELECT COUNT(*) FROM monitor_events` returns `0`, then opens a
+  second `BEGIN IMMEDIATE` transaction, inserts exactly two rows by
+  reusing one prepared INSERT statement with `__sqlite_reset`
+  (`title="committed low"`, `priority=4` and `title="committed high"`,
+  `priority=7`, verifying `__sqlite_changes` is `1` after each insert),
+  issues `COMMIT` through `__sqlite_exec`, verifies that
+  `SELECT COUNT(*)` is `2` and `SELECT SUM(priority)` is `11`, closes
+  the handle, reopens the same file, and confirms that COUNT(*) is
+  still `2` and SUM(priority) is still `11` across close/reopen. Every
+  prepared statement is finalized and every handle is closed on every
+  success and error path; on every error path inside an open
+  transaction the fixture best-effort `ROLLBACK`s before returning.
+  The fixture exercises only `__sqlite_open`, `__sqlite_close`,
+  `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
+  `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
+  `__sqlite_finalize`, `__sqlite_reset`, and `__sqlite_changes`
+  through their explicit C ABI (Vais string literals cross the
+  boundary through `as i64` casts). It does not call
+  `__sqlite_column_text`, does not call `__str_eq` or `__free` (the
+  check script links only the SQLite runtime translation unit), does
+  not use a callback, and does not start a server.
+- Narrowed `scripts/check-runtime-boundary.sh` so the SQLite
+  transaction allowlist applies only to
+  `server/src/db_transactions.vais`; other `__sqlite_*`, HTTP runtime,
+  `__tcp_*`, and WS runtime symbols remain blocked across `server/src`
+  and `playground`.
 
 ## Next
 
-1. Broaden DB persistence further (text column reads, transactions) only
-   after a new monitor-specific fixture certifies the additional
-   `__sqlite_*` surface required.
+1. Broaden DB persistence further (text column reads) only after a new
+   monitor-specific fixture certifies the additional `__sqlite_*` surface
+   required.
 2. Replace the static TypeScript task state with data produced through the Vais
    adapter path.
 

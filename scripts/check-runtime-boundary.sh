@@ -9,6 +9,7 @@ HTTP_RESPONSE_PARSE="$ROOT_DIR/server/src/http_response_parse.vais"
 HTTP_REQUEST_RESPONSE_LOOP="$ROOT_DIR/server/src/http_request_response_loop.vais"
 DB_PERSISTENCE="$ROOT_DIR/server/src/db_persistence.vais"
 DB_QUERY_ROWS="$ROOT_DIR/server/src/db_query_rows.vais"
+DB_TRANSACTIONS="$ROOT_DIR/server/src/db_transactions.vais"
 PATTERN='\b(__tcp_[A-Za-z0-9_]+|__find_header_end|__parse_request|__parse_response|__parse_url_[A-Za-z0-9_]+|__call_handler|__strlen|__str_eq|__str_eq_ignore_case|__malloc|__free|__sqlite_[A-Za-z0-9_]+|server_listen[A-Za-z0-9_]*|db_[A-Za-z0-9_]+|ws_[A-Za-z0-9_]+)\b'
 TOKEN_PATTERN='(__tcp_[A-Za-z0-9_]+|__find_header_end|__parse_request|__parse_response|__parse_url_[A-Za-z0-9_]+|__call_handler|__strlen|__str_eq|__str_eq_ignore_case|__malloc|__free|__sqlite_[A-Za-z0-9_]+|server_listen[A-Za-z0-9_]*|db_[A-Za-z0-9_]+|ws_[A-Za-z0-9_]+)'
 
@@ -75,6 +76,13 @@ while IFS= read -r match; do
     fi
   fi
 
+  if [[ "$file" == "$DB_TRANSACTIONS" ]]; then
+    disallowed="$(printf '%s\n' "$text" | grep -Eo "$TOKEN_PATTERN" | grep -Ev '^(__sqlite_open|__sqlite_close|__sqlite_exec|__sqlite_prepare|__sqlite_bind_int|__sqlite_bind_text|__sqlite_step|__sqlite_column_int|__sqlite_finalize|__sqlite_reset|__sqlite_changes)$' || true)"
+    if [[ -z "$disallowed" ]]; then
+      continue
+    fi
+  fi
+
   VIOLATIONS+="$match"$'\n'
 done <<< "$MATCHES"
 
@@ -88,6 +96,7 @@ if [[ -n "$VIOLATIONS" ]]; then
   echo "Only __tcp_listen/__tcp_connect/__tcp_accept/__tcp_send/__tcp_recv/__tcp_close/__strlen/__find_header_end/__parse_request/__parse_response/__call_handler/__str_eq/__malloc/__free are certified in server/src/http_request_response_loop.vais." >&2
   echo "Only __sqlite_open/__sqlite_close/__sqlite_exec/__sqlite_prepare/__sqlite_bind_int/__sqlite_bind_text/__sqlite_step/__sqlite_column_int/__sqlite_finalize/__sqlite_last_insert_rowid/__sqlite_changes are certified in server/src/db_persistence.vais." >&2
   echo "Only __sqlite_open/__sqlite_close/__sqlite_exec/__sqlite_prepare/__sqlite_bind_int/__sqlite_bind_text/__sqlite_step/__sqlite_column_int/__sqlite_column_type/__sqlite_column_count/__sqlite_column_name/__sqlite_finalize/__sqlite_reset/__sqlite_last_insert_rowid/__sqlite_changes are certified in server/src/db_query_rows.vais." >&2
+  echo "Only __sqlite_open/__sqlite_close/__sqlite_exec/__sqlite_prepare/__sqlite_bind_int/__sqlite_bind_text/__sqlite_step/__sqlite_column_int/__sqlite_finalize/__sqlite_reset/__sqlite_changes are certified in server/src/db_transactions.vais." >&2
   exit 1
 fi
 

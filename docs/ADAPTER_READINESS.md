@@ -15,7 +15,7 @@ Current public evidence from the sibling Vais checkout:
 - DB/server/web runtime main gate: promoted by compiler PR #53
 
 This means HTTP/DB adapter work may now start, but it does not make monitor
-complete by itself. Five monitor-specific HTTP adapter fixtures and two
+complete by itself. Five monitor-specific HTTP adapter fixtures and three
 monitor-specific DB fixtures are now allowed, each with its own narrowed
 symbol set:
 
@@ -119,6 +119,31 @@ symbol set:
   SQLite runtime translation unit), does not use a callback, and does not
   start a server. Path/SQL/text arguments cross the C boundary through
   explicit `as i64` casts.
+- `server/src/db_transactions.vais` allows only `__sqlite_open`,
+  `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`,
+  `__sqlite_bind_int`, `__sqlite_bind_text`, `__sqlite_step`,
+  `__sqlite_column_int`, `__sqlite_finalize`, `__sqlite_reset`, and
+  `__sqlite_changes`. The fixture pins the database file to
+  `/tmp/vais-monitor-db-transactions.sqlite`, drops/creates
+  `monitor_events`, opens a `BEGIN IMMEDIATE` transaction, inserts one
+  row (`title="rolled back"`, `priority=99`), verifies
+  `__sqlite_changes` is `1`, rolls back through `ROLLBACK`, verifies
+  that `SELECT COUNT(*)` is `0`, opens a second `BEGIN IMMEDIATE`
+  transaction, inserts two rows by reusing one prepared INSERT
+  statement with `__sqlite_reset` (`title="committed low"`,
+  `priority=4` and `title="committed high"`, `priority=7`, verifying
+  `__sqlite_changes` is `1` after each insert), commits through
+  `COMMIT`, verifies that `SELECT COUNT(*)` is `2` and
+  `SELECT SUM(priority)` is `11`, closes the handle, reopens the same
+  file, and confirms that COUNT(*) is still `2` and SUM(priority) is
+  still `11` across close/reopen. Every prepared statement is
+  finalized and every handle is closed on every success and error
+  path; on every error path inside an open transaction the fixture
+  best-effort `ROLLBACK`s before returning. The fixture does not call
+  `__sqlite_column_text`, does not call `__str_eq` or `__free` (the
+  check script links only the SQLite runtime translation unit), does
+  not use a callback, and does not start a server. Path/SQL/text
+  arguments cross the C boundary through explicit `as i64` casts.
 
 ## Gate
 
@@ -154,10 +179,10 @@ An adapter task may begin only when all of these are true:
 The current fixtures satisfy this rule only for the narrow symbol sets named
 above. Broader HTTP runtime behavior (persistent server loops, request-response
 handler wiring beyond the bounded fixture, URL parsing, additional response
-parser fields), broader `__sqlite_*` symbols (text columns, transactions,
-helpers not yet covered by the multi-row query fixture), or WebSocket symbols
-each need a new fixture and a matching boundary update before they may enter
-`server/src` or `playground`.
+parser fields), broader `__sqlite_*` symbols (text columns, helpers not yet
+covered by the multi-row query or transaction fixtures), or WebSocket
+symbols each need a new fixture and a matching boundary update before they
+may enter `server/src` or `playground`.
 
 If the upstream wording changes but the intended certification is equivalent,
 update this script and document the exact public gate name in the same commit.

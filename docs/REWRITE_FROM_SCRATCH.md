@@ -86,6 +86,30 @@ The rewrite starts with the smallest evidence-backed slice:
   `__free`, and the check script links only the SQLite runtime
   translation unit. Path/SQL/text arguments cross the C boundary
   through explicit `as i64` casts.
+- `scripts/check-db-transactions.sh` certifies only one bounded
+  SQLite transaction slice against a fixed file SQLite database.
+  The fixture opens the database, drops and creates `monitor_events`,
+  opens a `BEGIN IMMEDIATE` transaction, inserts one row through a
+  prepared statement (`title="rolled back"`, `priority=99`),
+  verifies `__sqlite_changes` is `1`, rolls back through `ROLLBACK`,
+  verifies that `SELECT COUNT(*)` is `0`, opens a second
+  `BEGIN IMMEDIATE` transaction, inserts exactly two rows by reusing
+  one prepared INSERT statement with `__sqlite_reset`
+  (`title="committed low"`, `priority=4` and
+  `title="committed high"`, `priority=7`, verifying
+  `__sqlite_changes` is `1` after each insert), commits through
+  `COMMIT`, verifies that `SELECT COUNT(*)` is `2` and
+  `SELECT SUM(priority)` is `11`, closes the handle, reopens the
+  same file, and confirms that COUNT(*) is still `2` and
+  SUM(priority) is still `11` across close/reopen. Every prepared
+  statement is finalized and every handle is closed on every
+  success and error path; on every error path inside an open
+  transaction the fixture best-effort `ROLLBACK`s before returning.
+  Transaction observation is integer-column only — the fixture does
+  not call `__sqlite_column_text`, does not call `__str_eq` or
+  `__free`, and the check script links only the SQLite runtime
+  translation unit. Path/SQL/text arguments cross the C boundary
+  through explicit `as i64` casts.
 - Broader runtime behavior remains out of scope until named fixtures exist.
 
 Recover the old tree only for comparison:

@@ -21,7 +21,7 @@ gh run list --repo vaislang/monitor --limit 5
 ```
 
 The main server slice is intentionally domain-only. It validates current Vais
-language surface through IR and native smoke gates. Seven separate fixtures
+language surface through IR and native smoke gates. Eight separate fixtures
 certify narrow HTTP and DB runtime slices:
 
 - `server/src/http_adapter.vais` certifies only HTTP listener open/close
@@ -111,6 +111,32 @@ certify narrow HTTP and DB runtime slices:
   `__str_eq`, or `__free`; it does not use a callback and does not start
   a server. Path/SQL/text arguments cross the C boundary through
   explicit `as i64` casts.
+- `server/src/db_transactions.vais` certifies only one bounded SQLite
+  transaction slice on a fixed file database (`__sqlite_open`,
+  `__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`,
+  `__sqlite_bind_int`, `__sqlite_bind_text`, `__sqlite_step`,
+  `__sqlite_column_int`, `__sqlite_finalize`, `__sqlite_reset`,
+  `__sqlite_changes`). The fixture pins the database to
+  `/tmp/vais-monitor-db-transactions.sqlite`, drops/creates
+  `monitor_events`, opens a `BEGIN IMMEDIATE` transaction, inserts
+  one row through a prepared statement (`title="rolled back"`,
+  `priority=99`), verifies `__sqlite_changes` is `1`, rolls back
+  through `ROLLBACK`, verifies that `SELECT COUNT(*)` is `0`, opens
+  a second `BEGIN IMMEDIATE` transaction, inserts exactly two rows
+  by reusing one prepared INSERT statement with `__sqlite_reset`
+  (`title="committed low"`, `priority=4` and
+  `title="committed high"`, `priority=7`, verifying
+  `__sqlite_changes` is `1` after each insert), commits through
+  `COMMIT`, verifies that `SELECT COUNT(*)` is `2` and
+  `SELECT SUM(priority)` is `11`, closes the handle, reopens the
+  same file, and confirms that COUNT(*) is still `2` and
+  SUM(priority) is still `11` across close/reopen. Every prepared
+  statement is finalized and every handle is closed on every success
+  and error path; on every error path inside an open transaction the
+  fixture best-effort `ROLLBACK`s before returning. The fixture does
+  not call `__sqlite_column_text`, `__str_eq`, or `__free`; it does
+  not use a callback and does not start a server. Path/SQL/text
+  arguments cross the C boundary through explicit `as i64` casts.
 
 `playground/monitor.vais` is a synchronized copy of `server/src/main.vais`. If
 the server source changes, run `scripts/sync-playground-example.sh` before the
@@ -172,7 +198,14 @@ inside one accept/send cycle. The DB multi-row query fixture allows only
 through integer columns only; column names are compared byte-by-byte
 through the built-in `load_byte` against expected C-string literals
 (including the trailing NUL) without invoking the Vais string-equality
-helper. The next adapter task is to broaden DB persistence further
-(text column reads, transactions) once a new monitor-specific fixture
-certifies the additional `__sqlite_*` surface required; web data wiring
-is a later slice.
+helper. The DB transactions fixture allows only `__sqlite_open`,
+`__sqlite_close`, `__sqlite_exec`, `__sqlite_prepare`,
+`__sqlite_bind_int`, `__sqlite_bind_text`, `__sqlite_step`,
+`__sqlite_column_int`, `__sqlite_finalize`, `__sqlite_reset`, and
+`__sqlite_changes`, and certifies one bounded rollback transaction,
+one bounded commit transaction with two inserts via a single
+prepared statement reused with `__sqlite_reset`, and persistence of
+the committed rows across a close/reopen of the same file. The next
+adapter task is to broaden DB persistence further (text column
+reads) once a new monitor-specific fixture certifies the additional
+`__sqlite_*` surface required; web data wiring is a later slice.

@@ -1,0 +1,315 @@
+# Monitor DB SQLite transaction fixture.
+# This file certifies that the monitor app can drive a small bounded SQLite
+# transaction sequence: it opens a fixed file database, drops/creates the
+# monitor_events table, opens a `BEGIN IMMEDIATE` transaction, inserts one
+# row through a prepared statement, verifies __sqlite_changes is 1, rolls
+# the transaction back through `ROLLBACK`, verifies that `SELECT COUNT(*)`
+# is 0, then opens a second `BEGIN IMMEDIATE` transaction, inserts two rows
+# through a single prepared INSERT reused with __sqlite_reset (verifying
+# __sqlite_changes is 1 after each insert), commits the transaction through
+# `COMMIT`, verifies that `SELECT COUNT(*)` is 2 and `SELECT SUM(priority)`
+# is 11, closes the handle, reopens the same file, and verifies that
+# COUNT(*) is still 2 and SUM(priority) is still 11 after close/reopen.
+# Every prepared statement is finalized and every handle is closed on every
+# success and error path.
+#
+# The runtime expects C strings (char*) for path/sql/text arguments, so every
+# runtime symbol is declared with raw i64 pointer arguments and Vais string
+# literals cross the C boundary through explicit `as i64` casts. This
+# fixture avoids text-column reads, generic string helpers, and generic
+# allocator helpers because the check script links only the SQLite runtime
+# translation unit. It does not use a callback and does not start a server.
+
+impl fn __sqlite_open(path: i64) -> i64
+impl fn __sqlite_close(handle: i64) -> i64
+impl fn __sqlite_exec(handle: i64, sql: i64, callback: i64) -> i64
+impl fn __sqlite_prepare(handle: i64, sql: i64) -> i64
+impl fn __sqlite_bind_int(stmt: i64, index: i64, value: i64) -> i64
+impl fn __sqlite_bind_text(stmt: i64, index: i64, text: i64) -> i64
+impl fn __sqlite_step(stmt: i64) -> i64
+impl fn __sqlite_column_int(stmt: i64, index: i64) -> i64
+impl fn __sqlite_finalize(stmt: i64) -> i64
+impl fn __sqlite_reset(stmt: i64) -> i64
+impl fn __sqlite_changes(handle: i64) -> i64
+
+fn sqlite_ok() -> i64 { 0 }
+fn sqlite_row() -> i64 { 100 }
+fn sqlite_done() -> i64 { 101 }
+
+fn database_path() -> i64 { "/tmp/vais-monitor-db-transactions.sqlite" as i64 }
+
+fn drop_sql() -> i64 { "DROP TABLE IF EXISTS monitor_events" as i64 }
+
+fn create_sql() -> i64 {
+    "CREATE TABLE monitor_events (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, priority INTEGER NOT NULL)" as i64
+}
+
+fn insert_sql() -> i64 {
+    "INSERT INTO monitor_events (title, priority) VALUES (?, ?)" as i64
+}
+
+fn begin_sql() -> i64 { "BEGIN IMMEDIATE" as i64 }
+fn commit_sql() -> i64 { "COMMIT" as i64 }
+fn rollback_sql() -> i64 { "ROLLBACK" as i64 }
+
+fn count_sql() -> i64 { "SELECT COUNT(*) FROM monitor_events" as i64 }
+fn sum_priority_sql() -> i64 { "SELECT SUM(priority) FROM monitor_events" as i64 }
+
+fn title_rollback() -> i64 { "rolled back" as i64 }
+fn title_low() -> i64 { "committed low" as i64 }
+fn title_high() -> i64 { "committed high" as i64 }
+
+fn finalize_and(stmt: i64, code: i64) -> i64 {
+    __sqlite_finalize(stmt)
+    code
+}
+
+fn close_and(handle: i64, code: i64) -> i64 {
+    __sqlite_close(handle)
+    code
+}
+
+# Run a single-column integer aggregate query (COUNT(*) or SUM(priority)),
+# step it once expecting SQLITE_ROW, read column 0 as integer, and verify it
+# equals `expected`. Returns 0 on match, an error code otherwise. Finalizes
+# the prepared statement on every path.
+fn verify_scalar_int(handle: i64, sql: i64, expected: i64, err_prepare: i64, err_step: i64, err_value: i64) -> i64 {
+    stmt := __sqlite_prepare(handle, sql)
+    I stmt == 0 {
+        return err_prepare
+    }
+    step_rc := __sqlite_step(stmt)
+    I step_rc != sqlite_row() {
+        return finalize_and(stmt, err_step)
+    }
+    got := __sqlite_column_int(stmt, 0)
+    I got != expected {
+        return finalize_and(stmt, err_value)
+    }
+    __sqlite_finalize(stmt)
+    0
+}
+
+# Drop and recreate the monitor_events table. Returns 0 on success.
+fn reset_schema(handle: i64) -> i64 {
+    drop_rc := __sqlite_exec(handle, drop_sql(), 0)
+    I drop_rc != sqlite_ok() {
+        return 11
+    }
+    create_rc := __sqlite_exec(handle, create_sql(), 0)
+    I create_rc != sqlite_ok() {
+        return 12
+    }
+    0
+}
+
+# Begin a `BEGIN IMMEDIATE` transaction, insert one row, verify
+# __sqlite_changes is 1, then roll the transaction back through `ROLLBACK`.
+# After rollback, verify that COUNT(*) is 0.
+fn run_rollback_transaction(handle: i64) -> i64 {
+    begin_rc := __sqlite_exec(handle, begin_sql(), 0)
+    I begin_rc != sqlite_ok() {
+        return 21
+    }
+
+    stmt := __sqlite_prepare(handle, insert_sql())
+    I stmt == 0 {
+        # Best-effort rollback so the connection does not stay in an open
+        # transaction on the error path.
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 22
+    }
+
+    bind_t := __sqlite_bind_text(stmt, 1, title_rollback())
+    I bind_t != sqlite_ok() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 23
+    }
+    bind_p := __sqlite_bind_int(stmt, 2, 99)
+    I bind_p != sqlite_ok() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 24
+    }
+
+    step_rc := __sqlite_step(stmt)
+    I step_rc != sqlite_done() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 25
+    }
+
+    changes := __sqlite_changes(handle)
+    I changes != 1 {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 26
+    }
+
+    __sqlite_finalize(stmt)
+
+    rollback_rc := __sqlite_exec(handle, rollback_sql(), 0)
+    I rollback_rc != sqlite_ok() {
+        return 27
+    }
+
+    count_rc := verify_scalar_int(handle, count_sql(), 0, 28, 29, 30)
+    I count_rc != 0 {
+        return count_rc
+    }
+
+    0
+}
+
+# Begin a `BEGIN IMMEDIATE` transaction, insert exactly two rows by reusing
+# one prepared INSERT statement with __sqlite_reset (verifying
+# __sqlite_changes is 1 after each insert), then commit through `COMMIT`.
+# After commit, verify COUNT(*) is 2 and SUM(priority) is 11.
+fn run_commit_transaction(handle: i64) -> i64 {
+    begin_rc := __sqlite_exec(handle, begin_sql(), 0)
+    I begin_rc != sqlite_ok() {
+        return 41
+    }
+
+    stmt := __sqlite_prepare(handle, insert_sql())
+    I stmt == 0 {
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 42
+    }
+
+    # Row 1: committed low
+    bind_t1 := __sqlite_bind_text(stmt, 1, title_low())
+    I bind_t1 != sqlite_ok() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 43
+    }
+    bind_p1 := __sqlite_bind_int(stmt, 2, 4)
+    I bind_p1 != sqlite_ok() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 44
+    }
+    step1 := __sqlite_step(stmt)
+    I step1 != sqlite_done() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 45
+    }
+    changes1 := __sqlite_changes(handle)
+    I changes1 != 1 {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 46
+    }
+    reset1 := __sqlite_reset(stmt)
+    I reset1 != sqlite_ok() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 47
+    }
+
+    # Row 2: committed high
+    bind_t2 := __sqlite_bind_text(stmt, 1, title_high())
+    I bind_t2 != sqlite_ok() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 48
+    }
+    bind_p2 := __sqlite_bind_int(stmt, 2, 7)
+    I bind_p2 != sqlite_ok() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 49
+    }
+    step2 := __sqlite_step(stmt)
+    I step2 != sqlite_done() {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 50
+    }
+    changes2 := __sqlite_changes(handle)
+    I changes2 != 1 {
+        __sqlite_finalize(stmt)
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 51
+    }
+
+    __sqlite_finalize(stmt)
+
+    commit_rc := __sqlite_exec(handle, commit_sql(), 0)
+    I commit_rc != sqlite_ok() {
+        # If commit itself fails, attempt rollback so the connection is not
+        # left mid-transaction.
+        __sqlite_exec(handle, rollback_sql(), 0)
+        return 52
+    }
+
+    count_rc := verify_scalar_int(handle, count_sql(), 2, 53, 54, 55)
+    I count_rc != 0 {
+        return count_rc
+    }
+    sum_rc := verify_scalar_int(handle, sum_priority_sql(), 11, 56, 57, 58)
+    I sum_rc != 0 {
+        return sum_rc
+    }
+
+    0
+}
+
+# Reopen the same database file and verify that the committed rows persist:
+# COUNT(*) is 2 and SUM(priority) is 11.
+fn verify_reopened_state() -> i64 {
+    handle := __sqlite_open(database_path())
+    I handle == 0 {
+        return 71
+    }
+    count_rc := verify_scalar_int(handle, count_sql(), 2, 72, 73, 74)
+    I count_rc != 0 {
+        return close_and(handle, count_rc)
+    }
+    sum_rc := verify_scalar_int(handle, sum_priority_sql(), 11, 75, 76, 77)
+    I sum_rc != 0 {
+        return close_and(handle, sum_rc)
+    }
+    close_rc := __sqlite_close(handle)
+    I close_rc != sqlite_ok() {
+        return 78
+    }
+    0
+}
+
+fn main() -> i64 {
+    handle := __sqlite_open(database_path())
+    I handle == 0 {
+        return 1
+    }
+
+    schema_rc := reset_schema(handle)
+    I schema_rc != 0 {
+        return close_and(handle, schema_rc)
+    }
+
+    rollback_rc := run_rollback_transaction(handle)
+    I rollback_rc != 0 {
+        return close_and(handle, rollback_rc)
+    }
+
+    commit_rc := run_commit_transaction(handle)
+    I commit_rc != 0 {
+        return close_and(handle, commit_rc)
+    }
+
+    close_rc := __sqlite_close(handle)
+    I close_rc != sqlite_ok() {
+        return 2
+    }
+
+    reopen_rc := verify_reopened_state()
+    I reopen_rc != 0 {
+        return reopen_rc
+    }
+
+    0
+}

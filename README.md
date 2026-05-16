@@ -133,6 +133,29 @@ from a clean vertical slice using the current official Vais docs.
 - `scripts/check-db-query-rows.sh`: emits IR, links the SQLite runtime
   fixture (`std/sqlite_runtime.c` plus `-lsqlite3`), and runs the
   multi-row query + schema migration + column metadata smoke.
+- `server/src/db_transactions.vais`: monitor-specific DB SQLite
+  transaction fixture. It certifies `__sqlite_open`, `__sqlite_close`,
+  `__sqlite_exec`, `__sqlite_prepare`, `__sqlite_bind_int`,
+  `__sqlite_bind_text`, `__sqlite_step`, `__sqlite_column_int`,
+  `__sqlite_finalize`, `__sqlite_reset`, and `__sqlite_changes`
+  against the public SQLite runtime. The fixture pins the database
+  file to `/tmp/vais-monitor-db-transactions.sqlite`, drops/creates
+  `monitor_events`, opens a `BEGIN IMMEDIATE` transaction, inserts one
+  row through a prepared statement, verifies `__sqlite_changes` is `1`,
+  rolls the transaction back through `ROLLBACK`, verifies that
+  `SELECT COUNT(*)` is `0`, opens a second `BEGIN IMMEDIATE`
+  transaction, inserts exactly two rows by reusing one prepared INSERT
+  statement with `__sqlite_reset` (verifying `__sqlite_changes` is `1`
+  after each insert), commits through `COMMIT`, verifies that
+  `SELECT COUNT(*)` is `2` and `SELECT SUM(priority)` is `11`, closes
+  the handle, reopens the same file, and confirms that COUNT(*) is
+  still `2` and SUM(priority) is still `11` across close/reopen.
+  Path/SQL/text arguments cross the C boundary through explicit
+  `as i64` casts. Transaction observation is integer-column only.
+- `scripts/check-db-transactions.sh`: emits IR, links the SQLite
+  runtime fixture (`std/sqlite_runtime.c` plus `-lsqlite3`), and runs
+  the transaction (rollback + commit + close/reopen persistence)
+  smoke.
 - `.github/workflows/reference-gates.yml`: GitHub Actions workflow template for
   hosted gate execution.
 
@@ -176,19 +199,20 @@ Read in this order before writing any Vais:
 
 Per `REFERENCE_APP_CONTRACT.md`, broaden only after the current named gates pass.
 `scripts/check-adapter-readiness.sh --require-promoted` passes against the
-current compiler baseline. Seven monitor-specific fixtures are now certified:
+current compiler baseline. Eight monitor-specific fixtures are now certified:
 HTTP listener open/close, HTTP request parsing/routing on fixed raw HTTP
 strings, one deterministic in-process HTTP response loopback on
 `127.0.0.1`, HTTP response parsing on fixed raw HTTP response strings, one
 bounded in-process HTTP request-response cycle that wires `__parse_request`,
 `__call_handler`, and `__parse_response` together on `127.0.0.1`, DB
-persistence across close/reopen on a fixed SQLite file database, and one
-bounded multi-row SQLite query + schema migration + column metadata slice on
-a fixed SQLite file database. The next implementation slice broadens DB
-persistence further (text column reads, transactions) only after a new
-monitor-specific fixture certifies the additional `__sqlite_*` surface
-required; broaden only after each new slice is reproducible from a clean
-checkout.
+persistence across close/reopen on a fixed SQLite file database, one
+bounded multi-row SQLite query + schema migration + column metadata slice
+on a fixed SQLite file database, and one bounded SQLite transaction slice
+that certifies rollback, commit, and close/reopen persistence on a fixed
+SQLite file database. The next implementation slice broadens DB
+persistence further (text column reads) only after a new monitor-specific
+fixture certifies the additional `__sqlite_*` surface required; broaden
+only after each new slice is reproducible from a clean checkout.
 
 Do not reintroduce legacy `F`/`S`/`EN`/`EL`/`R`/`U` syntax, do not commit
 `.ll` / `.db` / `node_modules` / `dist`, and do not claim completion beyond

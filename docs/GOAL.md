@@ -24,6 +24,7 @@ from the official Vais docs without relying on hidden project memory.
 - DB persistence gate: `scripts/check-db-persistence.sh`
 - DB multi-row query + schema migration + column metadata gate:
   `scripts/check-db-query-rows.sh`
+- DB transactions gate: `scripts/check-db-transactions.sh`
 - CI template: `.github/workflows/reference-gates.yml`
 - Remote: `https://github.com/vaislang/monitor`
 
@@ -94,7 +95,7 @@ Current HTTP adapter certification is limited to five narrow fixtures:
   parser-owned allocation, and closes every opened fd on every success
   and error path.
 
-Current DB adapter certification is limited to two narrow fixtures:
+Current DB adapter certification is limited to three narrow fixtures:
 
 - Persistence (open / drop / create / insert / close / reopen / select /
   close) through `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
@@ -118,7 +119,19 @@ Current DB adapter certification is limited to two narrow fixtures:
   `server/src/db_query_rows.vais`. Multi-row reads are observed through
   integer columns only; `__sqlite_column_text` is not part of the
   allowlist.
+- Transactions (open / drop / create / `BEGIN IMMEDIATE` / insert one
+  row / verify `__sqlite_changes` / `ROLLBACK` / verify
+  `SELECT COUNT(*)` is `0` / `BEGIN IMMEDIATE` / two inserts via one
+  prepared statement reused with `__sqlite_reset` / `COMMIT` / verify
+  `SELECT COUNT(*)` is `2` and `SELECT SUM(priority)` is `11` /
+  close / reopen / verify counts still match / close) through
+  `__sqlite_open`, `__sqlite_close`, `__sqlite_exec`,
+  `__sqlite_prepare`, `__sqlite_bind_int`, `__sqlite_bind_text`,
+  `__sqlite_step`, `__sqlite_column_int`, `__sqlite_finalize`,
+  `__sqlite_reset`, and `__sqlite_changes` in
+  `server/src/db_transactions.vais`. Transaction observation is
+  integer-column only.
 
-This is not a long-running server, multi-row text reads, transactions,
-query helpers beyond the certified column-metadata surface, URL parsing,
-or production server completion.
+This is not a long-running server, multi-row text reads, query helpers
+beyond the certified column-metadata and transaction surfaces, URL
+parsing, or production server completion.
